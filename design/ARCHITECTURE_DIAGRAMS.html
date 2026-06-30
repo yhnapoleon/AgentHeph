@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Agent 平台 · 架构与工作流图</title>
+<style>
+  body { font-family: system-ui, "Segoe UI", "Microsoft YaHei", sans-serif; margin: 0; background:#fafafa; color:#222; }
+  header { background:#1a5276; color:#fff; padding:18px 28px; }
+  header h1 { margin:0; font-size:20px; }
+  header p { margin:6px 0 0; font-size:13px; opacity:.85; }
+  .legend { display:flex; gap:18px; flex-wrap:wrap; padding:14px 28px; background:#fff; border-bottom:1px solid #eee; font-size:13px; }
+  .legend span { display:inline-flex; align-items:center; gap:6px; }
+  .sw { width:14px; height:14px; border-radius:3px; display:inline-block; border:1px solid #999; }
+  .oss{background:#d5f5e3;border-color:#1e8449} .bau{background:#d6eaf8;border-color:#2471a3}
+  .core{background:#fdebd0;border-color:#ca6f1e} .later{background:#f2f3f4;border-color:#909497}
+  section { padding:24px 28px; }
+  h2 { font-size:16px; border-left:4px solid #1a5276; padding-left:10px; }
+  .mermaid { background:#fff; border:1px solid #eee; border-radius:8px; padding:16px; overflow:auto; }
+  footer { padding:18px 28px; font-size:12px; color:#777; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Agent Chatbot 平台 · 架构与工作流</h1>
+  <p>配套 PLATFORM_DESIGN.md（终态）/ MVP_DESIGN.md（近期照做）。颜色 = 组件来源。</p>
+</header>
+
+<div class="legend">
+  <span><i class="sw oss"></i>复用成熟开源</span>
+  <span><i class="sw bau"></i>从 BAU 移植</span>
+  <span><i class="sw core"></i>自建新内核</span>
+  <span><i class="sw later"></i>推迟 / Post-MVP</span>
+</div>
+
+<section>
+  <h2>1. 项目结构</h2>
+  <pre class="mermaid">
+flowchart TB
+  classDef oss fill:#d5f5e3,stroke:#1e8449,color:#145a32;
+  classDef bau fill:#d6eaf8,stroke:#2471a3,color:#1a5276;
+  classDef core fill:#fdebd0,stroke:#ca6f1e,color:#7e5109;
+  classDef later fill:#f2f3f4,stroke:#909497,color:#566573,stroke-dasharray:5 3;
+
+  subgraph L0["客户端 / 前端"]
+    direction LR
+    chatui["Chat UI + 单一 SSE 渲染器<br/>(assistant-ui / Vercel AI SDK)"]:::later
+    studio["Studio 配置前端<br/>(表单 + chatbot 引导)"]:::later
+  end
+
+  subgraph L1["API / 契约层"]
+    direction LR
+    contract["SSE 契约 v1alpha1<br/>run_id · call_id · seq · timestamp"]:::bau
+    resolver["deployment_id → 不可变 manifest_digest"]:::core
+    reconnect["SSE 断线恢复 id/Last-Event-ID/重放"]:::later
+  end
+
+  subgraph L2["agent_core 运行时 · 自建内核"]
+    direction TB
+    manifest["Manifest 加载/校验"]:::core
+    providers["Provider 接口<br/>Tool · Knowledge · Auth · DataScope"]:::core
+    identity["身份三分<br/>Principal · Credential · Execution"]:::core
+    reactgraph["LangGraph ReAct 图"]:::oss
+    dispatch["dispatcher 路由 (读侧 tool-calling)"]:::bau
+    gov["工具治理<br/>去重 · runaway上限25 · artifact 旁路"]:::bau
+    llm["LLM 工厂 (langchain-openai / LiteLLM)"]:::bau
+    gate["写双门<br/>mode AND effect AND 确认 AND executor复核"]:::core
+    ckpt["会话 checkpointer"]:::oss
+  end
+
+  subgraph L3["Plugin · MVP 仅 BAU 一个"]
+    direction LR
+    toolprov["BAU ToolProvider (bau_* 工具)"]:::bau
+    knowprov["KnowledgeProvider (domain card)"]:::bau
+    datascope["DataScopeAdapter<br/>per-row 行级裁剪 (不可省)"]:::core
+    effect["effect 位 read_only/has_side_effect<br/>(人工审核冻结)"]:::core
+  end
+
+  subgraph L4["知识层"]
+    direction LR
+    cards["分区结构化卡片<br/>主键 domain/entity, UI 仅 source_ref"]:::core
+    kstore["索引存储 (Postgres FTS / SQLite FTS5)"]:::oss
+    appknow["app_knowledge 工具 (enum 检索)"]:::core
+    retr["动态工具/卡片检索 (RAG-MCP, &gt;~30)"]:::later
+    vec["向量兜底 (pgvector)"]:::later
+  end
+
+  subgraph L5["工具接入"]
+    direction LR
+    mcp["MCP 接入 (MCP SDK + langchain-mcp-adapters)"]:::oss
+    oapi["OpenAPI 导入→minify→聚类→重塑→review"]:::later
+    gw["Tool Gateway (直连现成 API)"]:::later
+  end
+
+  subgraph L6["写事务"]
+    direction LR
+    proposal["WriteProposal + 自有 store + confirm<br/>(BAU 现模型, 不依赖 interrupt)"]:::bau
+    txn["写事务状态机 DRAFT→…→COMPENSATION"]:::later
+    durable["Postgres durable checkpoint<br/>(仅 interrupt 式写需要)"]:::later
+  end
+
+  subgraph L7["质量 / 安全 / 同步"]
+    direction LR
+    evalg["最小 eval gate<br/>工具轨迹/scope/不编造"]:::core
+    evaltool["Eval/红队 (DeepEval/Giskard/promptfoo/DSPy)"]:::oss
+    specdiff["spec-diff → 受影响工具/卡片反查 (oasdiff)"]:::later
+    inject["间接注入全套 DLP/egress/MCP签名"]:::later
+    audit["审计 (AgentRun)"]:::bau
+  end
+
+  subgraph L8["基础设施"]
+    direction LR
+    pg["PostgreSQL"]:::oss
+    queue["Celery + Redis"]:::oss
+    obs["OTel / Langfuse"]:::oss
+    authk["Keycloak / Casbin"]:::later
+    secret["Vault / KMS"]:::oss
+  end
+
+  L0 --> L1 --> L2
+  L2 --> L3 --> L4
+  L2 --> L5
+  L2 --> L6
+  L2 --> L7
+  L2 -.->|依赖| L8
+  L4 --> kstore
+  L3 --> effect --> gate
+  datascope --> gov
+  </pre>
+</section>
+
+<section>
+  <h2>2. 运行时工作流（一次 turn）</h2>
+  <pre class="mermaid">
+flowchart TD
+  classDef bau fill:#d6eaf8,stroke:#2471a3,color:#1a5276;
+  classDef core fill:#fdebd0,stroke:#ca6f1e,color:#7e5109;
+  classDef oss fill:#d5f5e3,stroke:#1e8449,color:#145a32;
+
+  A["用户消息 + deployment_id"]:::bau --> B["解析 manifest_digest, 绑定 thread/checkpoint"]:::core
+  B --> C["建图: 按 actor 裁剪可见工具/分区"]:::core
+  C --> D{"tool-calling 循环 (读侧无意图分类)"}:::oss
+
+  D -->|怎么用、解释| K["app_knowledge(area) 取分区卡片"]:::core
+  D -->|查数据| T["bau_* 数据工具"]:::bau
+  T --> DS["DataScopeAdapter per-row 行级裁剪"]:::core
+  DS --> D
+  K --> D
+
+  D -->|够答即停| ANS["生成回答, 每字段可溯源 (不编造)"]:::core
+  ANS --> DONE["SSE: tool_call/result(call_id配对) → artifact → answer → done"]:::bau
+
+  D -.检测到变更请求.-> W{"显式 write mode?"}:::core
+  W -->|否| NUDGE["提示: 请切换写入模式"]:::bau
+  W -->|是, effect=has_side_effect| PROP["生成 WriteProposal 持久化"]:::bau
+  PROP --> CONFIRM["用户确认 (人工)"]:::core
+  CONFIRM --> EXEC["executor 复核 权限/版本/expiry/幂等 → 执行"]:::core
+  EXEC --> DONE
+  </pre>
+</section>
+
+<section>
+  <h2>3. 构建工作流（manifest 生产管线 · 多为 Post-MVP）</h2>
+  <pre class="mermaid">
+flowchart LR
+  classDef core fill:#fdebd0,stroke:#ca6f1e,color:#7e5109;
+  classDef later fill:#f2f3f4,stroke:#909497,color:#566573,stroke-dasharray:5 3;
+  classDef bau fill:#d6eaf8,stroke:#2471a3,color:#1a5276;
+
+  SRC["源: GitHub / 上传 / swagger / 额外API"]:::later
+  SRC --> TL["工具层: MCP接入 或 swagger→minify→聚类→重塑→review"]:::later
+  SRC --> KB["知识层: 按domain分区→LLM起草→人工审核→入索引(provenance+hash)"]:::later
+  TL --> MAN["Manifest 组装 (v1alpha1)"]:::core
+  KB --> MAN
+  MAN --> RB["RBAC + DataScope 配置 (越权代码兜底)"]:::core
+  RB --> EV["Eval 黄金集(断言式) + gates"]:::core
+  EV --> DEP["部署 staging → 过 gate → prod (版本冻结/可回滚)"]:::core
+  DEP --> SY["spec-diff(oasdiff) → 受影响工具/卡片反查 → 增量更新"]:::later
+  SY --> TL
+
+  MVP["MVP 实际范围: BAU 工具/知识直接作 Provider, 跳过导入链, 直接组装跑通行为等价"]:::bau
+  MVP -.替代.-> MAN
+  </pre>
+</section>
+
+<section>
+  <h2>4. MVP vs 完整设计</h2>
+  <pre class="mermaid">
+flowchart LR
+  classDef core fill:#fdebd0,stroke:#ca6f1e,color:#7e5109;
+  classDef bau fill:#d6eaf8,stroke:#2471a3,color:#1a5276;
+  classDef oss fill:#d5f5e3,stroke:#1e8449,color:#145a32;
+  classDef later fill:#f2f3f4,stroke:#909497,color:#566573,stroke-dasharray:5 3;
+
+  subgraph MVP["MVP (P0/P1 现在建)"]
+    m1["manifest + agent_core"]:::core
+    m2["BAU 作唯一 plugin"]:::bau
+    m3["per-row DataScope"]:::core
+    m4["读安全 + BAU 现有草案写"]:::bau
+    m5["SSE v1alpha1 + call_id 修复"]:::bau
+    m6["最小 eval gate"]:::core
+    m7["静态 enum 知识检索"]:::core
+  end
+  subgraph DEC["现在决策, 不建机器"]
+    d1["身份三分形状 / tenant 预留"]:::core
+    d2["知识主键 domain/entity"]:::core
+    d3["effect 二元位"]:::core
+    d4["v1alpha1 不冻结"]:::core
+  end
+  subgraph DEF["推迟 (带触发器)"]
+    x1["写事务状态机/durable ckpt"]:::later
+    x2["完整身份链/多租户"]:::later
+    x3["注入全套/MCP签名"]:::later
+    x4["动态检索/swagger导入"]:::later
+    x5["spec-diff/断线恢复"]:::later
+    x6["Studio 前端"]:::later
+  end
+  MVP --> DEC --> DEF
+  </pre>
+</section>
+
+<footer>由设计讨论生成 · 如需离线渲染，将 mermaid 脚本换成本地文件。</footer>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: true, theme: 'default', flowchart: { htmlLabels: true, useMaxWidth: true } });
+</script>
+</body>
+</html>

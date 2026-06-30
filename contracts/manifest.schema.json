@@ -1,0 +1,455 @@
+{
+  "$defs": {
+    "AuditConfig": {
+      "properties": {
+        "sink": {
+          "default": "agent_run",
+          "title": "Sink",
+          "type": "string"
+        },
+        "retention_days": {
+          "default": 365,
+          "title": "Retention Days",
+          "type": "integer"
+        }
+      },
+      "title": "AuditConfig",
+      "type": "object"
+    },
+    "Capability": {
+      "enum": [
+        "guide",
+        "data_read",
+        "propose_write"
+      ],
+      "title": "Capability",
+      "type": "string"
+    },
+    "EvalConfig": {
+      "properties": {
+        "golden_set_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Golden Set Ref"
+        },
+        "gates": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Gates",
+          "type": "array"
+        }
+      },
+      "title": "EvalConfig",
+      "type": "object"
+    },
+    "KnowledgeConfig": {
+      "properties": {
+        "partitions": {
+          "items": {
+            "$ref": "#/$defs/KnowledgePartition"
+          },
+          "title": "Partitions",
+          "type": "array"
+        },
+        "discovery": {
+          "default": "enum",
+          "title": "Discovery",
+          "type": "string"
+        }
+      },
+      "title": "KnowledgeConfig",
+      "type": "object"
+    },
+    "KnowledgePartition": {
+      "properties": {
+        "area": {
+          "title": "Area",
+          "type": "string"
+        },
+        "sources": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Sources",
+          "type": "array"
+        }
+      },
+      "required": [
+        "area"
+      ],
+      "title": "KnowledgePartition",
+      "type": "object"
+    },
+    "Metadata": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "version": {
+          "default": 1,
+          "title": "Version",
+          "type": "integer"
+        },
+        "display_name": {
+          "title": "Display Name",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "display_name"
+      ],
+      "title": "Metadata",
+      "type": "object"
+    },
+    "ModelConfig": {
+      "properties": {
+        "endpoint_ref": {
+          "title": "Endpoint Ref",
+          "type": "string"
+        },
+        "default": {
+          "type": "string",
+          "title": "Default"
+        },
+        "light": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Light"
+        },
+        "vision": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Vision"
+        },
+        "api_format": {
+          "default": "openai",
+          "title": "Api Format",
+          "type": "string"
+        }
+      },
+      "required": [
+        "endpoint_ref",
+        "default"
+      ],
+      "title": "ModelConfig",
+      "type": "object"
+    },
+    "PromptConfig": {
+      "properties": {
+        "discipline_profile": {
+          "default": "strict-internal",
+          "title": "Discipline Profile",
+          "type": "string"
+        },
+        "slots": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Slots",
+          "type": "object"
+        }
+      },
+      "title": "PromptConfig",
+      "type": "object"
+    },
+    "RbacConfig": {
+      "properties": {
+        "principal_adapter": {
+          "title": "Principal Adapter",
+          "type": "string"
+        },
+        "data_scope_adapter": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Data Scope Adapter"
+        },
+        "visibility": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": "Visibility",
+          "type": "object"
+        }
+      },
+      "required": [
+        "principal_adapter"
+      ],
+      "title": "RbacConfig",
+      "type": "object"
+    },
+    "ToolGovernance": {
+      "properties": {
+        "per_tool_call_limit": {
+          "default": 25,
+          "title": "Per Tool Call Limit",
+          "type": "integer"
+        },
+        "dedup_exact_repeats": {
+          "default": true,
+          "title": "Dedup Exact Repeats",
+          "type": "boolean"
+        },
+        "max_total_calls": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Total Calls"
+        },
+        "max_graph_steps": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Graph Steps"
+        },
+        "wall_clock_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Wall Clock Ms"
+        },
+        "concurrency": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Concurrency"
+        }
+      },
+      "title": "ToolGovernance",
+      "type": "object"
+    },
+    "ToolSource": {
+      "description": "Reserved (phase 2): where tools are imported from.",
+      "properties": {
+        "type": {
+          "title": "Type",
+          "type": "string"
+        },
+        "ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ref"
+        },
+        "auth_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Auth Ref"
+        },
+        "trust_level": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trust Level"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "ToolSource",
+      "type": "object"
+    },
+    "ToolsConfig": {
+      "properties": {
+        "provider": {
+          "title": "Provider",
+          "type": "string"
+        },
+        "effects": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Effects",
+          "type": "object"
+        },
+        "governance": {
+          "$ref": "#/$defs/ToolGovernance"
+        },
+        "sources": {
+          "items": {
+            "$ref": "#/$defs/ToolSource"
+          },
+          "title": "Sources",
+          "type": "array"
+        }
+      },
+      "required": [
+        "provider"
+      ],
+      "title": "ToolsConfig",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "apiVersion": {
+      "default": "agentstudio/v1alpha1",
+      "title": "Apiversion",
+      "type": "string"
+    },
+    "kind": {
+      "default": "ChatbotManifest",
+      "title": "Kind",
+      "type": "string"
+    },
+    "metadata": {
+      "$ref": "#/$defs/Metadata"
+    },
+    "capabilities": {
+      "items": {
+        "$ref": "#/$defs/Capability"
+      },
+      "title": "Capabilities",
+      "type": "array"
+    },
+    "model": {
+      "$ref": "#/$defs/ModelConfig"
+    },
+    "tools": {
+      "$ref": "#/$defs/ToolsConfig"
+    },
+    "knowledge": {
+      "$ref": "#/$defs/KnowledgeConfig"
+    },
+    "rbac": {
+      "$ref": "#/$defs/RbacConfig"
+    },
+    "prompt": {
+      "$ref": "#/$defs/PromptConfig"
+    },
+    "eval": {
+      "$ref": "#/$defs/EvalConfig"
+    },
+    "audit": {
+      "$ref": "#/$defs/AuditConfig"
+    },
+    "tenant_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Tenant Id"
+    },
+    "credential_context": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Credential Context"
+    },
+    "sync": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sync"
+    }
+  },
+  "required": [
+    "metadata",
+    "capabilities",
+    "model",
+    "tools",
+    "rbac"
+  ],
+  "title": "ChatbotManifest",
+  "type": "object"
+}

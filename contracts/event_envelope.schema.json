@@ -1,0 +1,58 @@
+{
+  "$defs": {
+    "EventType": {
+      "enum": [
+        "meta",
+        "tool_call",
+        "tool_result",
+        "artifact",
+        "answer",
+        "error",
+        "done",
+        "write_proposal",
+        "proposal_status"
+      ],
+      "title": "EventType",
+      "type": "string"
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "event": {
+      "$ref": "#/$defs/EventType"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "thread_id": {
+      "title": "Thread Id",
+      "type": "string"
+    },
+    "seq": {
+      "title": "Seq",
+      "type": "integer"
+    },
+    "timestamp": {
+      "title": "Timestamp",
+      "type": "string"
+    },
+    "data": {
+      "additionalProperties": true,
+      "title": "Data",
+      "type": "object"
+    }
+  },
+  "required": [
+    "event",
+    "run_id",
+    "thread_id",
+    "seq"
+  ],
+  "title": "EventEnvelope",
+  "type": "object"
+}

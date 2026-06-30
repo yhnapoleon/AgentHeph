@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>二期架构 · readonly / edit / 额外工具</title>
+<style>
+  body { font-family: system-ui, "Segoe UI", "Microsoft YaHei", sans-serif; margin:0; background:#fafafa; color:#222; line-height:1.65; }
+  header { background:#1a5276; color:#fff; padding:22px 30px; }
+  header h1 { margin:0; font-size:21px; }
+  header p { margin:8px 0 0; font-size:13px; opacity:.92; }
+  nav.toc { background:#fff; border-bottom:1px solid #eee; padding:12px 30px; font-size:13px; }
+  nav.toc a { color:#1a5276; margin-right:16px; text-decoration:none; }
+  .legend { display:flex; gap:18px; flex-wrap:wrap; padding:12px 30px; background:#eef5fb; border-bottom:1px solid #eee; font-size:13px; }
+  .legend span { display:inline-flex; align-items:center; gap:6px; }
+  .sw { width:14px; height:14px; border-radius:3px; display:inline-block; border:1px solid #999; }
+  .p1{background:#d6eaf8;border-color:#2471a3} .p2{background:#fdebd0;border-color:#ca6f1e;border-width:2px}
+  .opt{background:#f2f3f4;border-color:#909497}
+  section { padding:22px 30px; border-bottom:1px solid #f0f0f0; }
+  h2 { font-size:18px; border-left:4px solid #1a5276; padding-left:10px; }
+  .mermaid { background:#fff; border:1px solid #eee; border-radius:8px; padding:16px; overflow:auto; }
+  table { border-collapse:collapse; width:100%; font-size:13px; margin:8px 0; background:#fff; }
+  th,td { border:1px solid #e5e5e5; padding:7px 9px; text-align:left; vertical-align:top; }
+  th { background:#e7eff7; }
+  ul { margin:6px 0; padding-left:20px; }
+  .note { background:#eef5fb; border:1px solid #aed0ea; border-radius:8px; padding:12px 14px; font-size:14px; }
+  footer { padding:18px 30px; font-size:12px; color:#777; }
+</style>
+</head>
+<body>
+<header>
+  <h1>二期架构 · 增加 readonly / edit 类型与额外工具</h1>
+  <p>一期只交付 core + guide；二期在同一套 core 上接入「只读数据助手」「可编辑助手」与更多工具。本页用颜色标出二期相对一期的增量。</p>
+</header>
+
+<nav class="toc">
+  <a href="#delta">0 增量概览</a>
+  <a href="#bot">1 生成的 chatbot 架构</a>
+  <a href="#studio">2 Studio 架构</a>
+  <a href="#build">3 构建流程</a>
+  <a href="#qa">4 问答流程</a>
+</nav>
+
+<div class="legend">
+  <span><i class="sw p1"></i>一期已建（core）</span>
+  <span><i class="sw p2"></i>二期新增</span>
+  <span><i class="sw opt"></i>二期可选 / 触发式</span>
+</div>
+
+<section id="delta">
+  <h2>0. 二期相对一期加了什么</h2>
+  <table>
+    <tr><th>维度</th><th>一期 (core + guide)</th><th>二期新增</th></tr>
+    <tr><td>类型</td><td>guide</td><td>readonly（查数据/分析）、edit（改数据）</td></tr>
+    <tr><td>主源</td><td>前端 UI</td><td>OpenAPI / MCP（给工具）</td></tr>
+    <tr><td>工具</td><td>知识检索 + 导航</td><td>数据工具、写工具、MCP/外部 API；工具数破 30 时动态检索</td></tr>
+    <tr><td>权限</td><td>可见性层（行级可选）</td><td><b>per-row 行级裁剪（readonly/edit 必需）</b></td></tr>
+    <tr><td>effect</td><td>二元 read_only/has_side_effect</td><td>完整 effect 契约（class/security/runtime）+ 写双门</td></tr>
+    <tr><td>写</td><td>无</td><td>WriteProposal → 人工确认 → executor 复核执行；interrupt 式写另需 durable checkpoint</td></tr>
+    <tr><td>身份</td><td>Principal</td><td>完整链 CredentialContext（委托/多租户时）</td></tr>
+    <tr><td>同步</td><td>UI-diff</td><td>+ OpenAPI oasdiff</td></tr>
+  </table>
+  <p class="note"><b>core 一期就支持</b>：manifest、agent_core、Provider 接口、SSE 契约、工具治理、eval gate、注册/发布——二期只在其上挂新模块，不改 core。</p>
+</section>
+
+<section id="bot">
+  <h2>1. 生成的 chatbot 架构（二期）</h2>
+  <pre class="mermaid">
+flowchart TB
+  classDef p1 fill:#d6eaf8,stroke:#2471a3,color:#1a5276;
+  classDef p2 fill:#fdebd0,stroke:#ca6f1e,color:#7e5109,stroke-width:3px;
+  classDef opt fill:#f2f3f4,stroke:#909497,color:#566573,stroke-dasharray:5 3;
+
+  subgraph FE["前端"]
+    chatui["Chat UI + SSE 渲染器"]:::p1
+    typesel["类型选择 guide/readonly/edit"]:::p2
+  end
+  subgraph CT["契约层"]
+    contract["SSE 契约（读事件）"]:::p1
+    wevents["写事件 WriteProposal/confirm"]:::p2
+  end
+  subgraph ENG["agent_core 运行时"]
+    lggraph["LangGraph ReAct"]:::p1
+    providers["Provider 接口"]:::p1
+    gov["工具治理"]:::p1
+    guard["只读准入"]:::p1
+    effectgate["effect 写双门（完整）"]:::p2
+    retr["动态工具检索 大于30"]:::opt
+  end
+  subgraph PL["插件层"]
+    knowprov["知识 Provider"]:::p1
+    datatools["数据工具 Provider"]:::p2
+    writetools["写工具 Provider"]:::p2
+    datascope["DataScopeAdapter 行级裁剪"]:::p2
+  end
+  subgraph KL["知识层"]
+    cards["分区卡片 + app_knowledge"]:::p1
+  end
+  subgraph TL["工具接入层"]
+    mcp["MCP 接入"]:::p2
+    oapi["OpenAPI 工具"]:::p2
+  end
+  subgraph WT["写事务层"]
+    proposal["WriteProposal + store"]:::p2
+    confirm["人工确认"]:::p2
+    executor["executor 复核执行"]:::p2
+    ckpt["durable checkpoint（interrupt 式写）"]:::opt
+  end
+  subgraph IDN["身份"]
+    principal["Principal"]:::p1
+    cred["CredentialContext 完整链"]:::p2
+  end
+
+  FE --> CT --> ENG --> PL
+  PL --> KL
+  PL --> TL
+  ENG --> effectgate --> WT
+  ENG --> IDN
+  </pre>
+  <p class="note">core（蓝）不变；二期在插件层加数据/写工具与行级裁剪，在运行时加 effect 写双门，新增工具接入层与写事务层。guide 仍用知识层。</p>
+</section>
+
+<section id="studio">
+  <h2>2. Studio 架构（二期）</h2>
+  <pre class="mermaid">
+flowchart TB
+  classDef p1 fill:#d6eaf8,stroke:#2471a3,color:#1a5276;
+  classDef p2 fill:#fdebd0,stroke:#ca6f1e,color:#7e5109,stroke-width:3px;
+
+  subgraph SUI["Studio 前端"]
+    wiz["配置向导（选类型）"]:::p2
+    srcui["源接入 UI+API+MCP"]:::p2
+    toolui["工具范围选择 swagger 聚类"]:::p2
+    cardui["卡片审核"]:::p1
+    rbacui["RBAC 矩阵编辑"]:::p2
+    evalui["评测面板"]:::p1
+  end
+  subgraph SAPI["控制面 API"]
+    proj["项目/部署管理"]:::p1
+    mancrud["Manifest 版本化"]:::p1
+    orch["流水线编排"]:::p1
+  end
+  subgraph SING["源摄取"]
+    uiing["UI 摄取 A/B/C"]:::p1
+    apiing["OpenAPI 摄取"]:::p2
+    mcping["MCP 自省"]:::p2
+  end
+  subgraph SGEN["生成器 LLM"]
+    cardgen["卡片生成"]:::p1
+    toolgen["工具重塑器"]:::p2
+    effectgen["effect 候选生成"]:::p2
+    rbacgen["RBAC 建议器"]:::p2
+    evalgen["eval 黄金集生成"]:::p1
+  end
+  subgraph SREV["人工审核"]
+    cardrev["卡片审核"]:::p1
+    toolrev["工具 + effect 冻结"]:::p2
+  end
+  subgraph SEV["评测引擎"]
+    rn["黄金集 + gate"]:::p1
+  end
+  subgraph SREG["注册 / 存储"]
+    cardstore["卡片索引库"]:::p1
+    toolreg["工具 + effect 注册"]:::p2
+    manreg["Manifest 注册表"]:::p1
+  end
+
+  SUI --> SAPI --> SING --> SGEN --> SREV --> SEV
+  SGEN --> SREG
+  SREV --> SREG
+  </pre>
+  <p class="note">二期 Studio 在一期（UI 摄取 + 卡片生成 + 评测）基础上，新增 OpenAPI/MCP 摄取、工具重塑器、effect 候选生成、RBAC 建议器，以及"工具 + effect 冻结"这道关键人工审核。</p>
+</section>
+
+<section id="build">
+  <h2>3. chatbot 构建流程（二期）</h2>
+  <pre class="mermaid">
+flowchart TB
+  classDef p1 fill:#d6eaf8,stroke:#2471a3,color:#1a5276;
+  classDef p2 fill:#fdebd0,stroke:#ca6f1e,color:#7e5109,stroke-width:3px;
+
+  plan["Create Scan Plan（RBAC-first）"]:::p1
+  subgraph EXT["提取"]
+    src["源码提取"]:::p1
+    rtsc["运行时安全浅扫描"]:::p1
+    oapi["OpenAPI 提取"]:::p2
+    mcpx["MCP 自省"]:::p2
+  end
+  plan --> EXT
+  EXT --> norm["Normalize → UI Inventory + API Facts"]:::p1
+  norm --> ev["证据矩阵"]:::p1
+  ev --> split{"分两条产线"}:::p2
+  split -->|知识| tp["Topic Planning"]:::p1
+  split -->|工具| tr["工具重塑 + effect 候选"]:::p2
+  tp --> cg["卡片生成"]:::p1
+  tr --> tg["工具组装"]:::p2
+  cg --> rev["人工审核 卡片"]:::p1
+  tg --> erev["人工冻结 工具+effect"]:::p2
+  rev --> man["Manifest 组装"]:::p1
+  erev --> man
+  man --> rbac["RBAC + DataScope 配置"]:::p2
+  rbac --> eg["Eval Gate"]:::p1
+  eg --> rel["不可变发布"]:::p1
+  </pre>
+  <p class="note">一期只有"知识"那条产线（提取→证据→Topic→卡片→审核）。二期在证据矩阵后<b>分叉出"工具"产线</b>：OpenAPI/MCP → 工具重塑 + effect 候选 → 人工冻结，与卡片产线汇合到 Manifest，再加 RBAC/DataScope 配置。</p>
+</section>
+
+<section id="qa">
+  <h2>4. chatbot 问答流程（二期）</h2>
+  <pre class="mermaid">
+flowchart TD
+  classDef p1 fill:#d6eaf8,stroke:#2471a3,color:#1a5276;
+  classDef p2 fill:#fdebd0,stroke:#ca6f1e,color:#7e5109,stroke-width:3px;
+
+  A["用户消息 + deployment_id + 类型"]:::p1 --> B["锁版本, 建图, 按权限裁剪"]:::p1
+  B --> C{"tool-calling 循环"}:::p1
+  C -->|怎么用、解释| K["取知识卡片"]:::p1
+  C -->|查数据| T["数据工具"]:::p2
+  T --> DS["DataScope 行级裁剪"]:::p2
+  DS --> C
+  K --> C
+  C -->|够答即停| ANS["组答, 字段溯源"]:::p1
+  ANS --> DONE["SSE 返回"]:::p1
+
+  C -.->|变更请求| W{"显式 write mode 且 effect 有副作用"}:::p2
+  W -->|否| NUDGE["提示切换写入模式"]:::p2
+  W -->|是| PROP["生成 WriteProposal"]:::p2
+  PROP --> CONFIRM["人工确认"]:::p2
+  CONFIRM --> EXEC["executor 复核 权限/版本/expiry/幂等 → 执行"]:::p2
+  EXEC --> DONE
+  </pre>
+  <p class="note">一期问答只有蓝色部分（知识卡片 + 可选只读）。二期新增：<b>数据工具 + 行级裁剪</b>（readonly），以及<b>整条写分支</b>——检测变更请求 → 必须显式 write mode 且工具 effect 有副作用 → 生成草案 → 人工确认 → executor 执行前再复核（权限/版本/expiry/幂等）。读路径仍只读、写永不自动。</p>
+</section>
+
+<footer>二期架构 · 颜色：蓝=一期 core 已建、橙粗=二期新增、灰虚线=二期可选/触发式 · 离线渲染请将 mermaid 脚本换为本地文件。</footer>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: true, theme: 'default', flowchart: { htmlLabels: true, useMaxWidth: true } });
+</script>
+</body>
+</html>

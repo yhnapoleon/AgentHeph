@@ -1,0 +1,45 @@
+{
+  "properties": {
+    "deployment_id": {
+      "title": "Deployment Id",
+      "type": "string"
+    },
+    "message": {
+      "maxLength": 8000,
+      "minLength": 1,
+      "title": "Message",
+      "type": "string"
+    },
+    "thread_id": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Thread Id"
+    },
+    "client_request_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Client Request Id"
+    }
+  },
+  "required": [
+    "deployment_id",
+    "message"
+  ],
+  "title": "ChatRequest",
+  "type": "object"
+}

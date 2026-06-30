@@ -1,0 +1,33 @@
+[project]
+name = "agentheph"
+version = "0.0.1"
+description = "Platform for generating app-specific chatbots from a declarative manifest."
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.4",
+]
+# Runtime extras land in M1 (LangGraph, langchain-openai, SQLAlchemy, etc.)
+runtime = [
+    "langgraph>=0.2",
+    "langchain-openai>=0.1",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["agent_core*", "studio*", "plugins*", "contracts*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

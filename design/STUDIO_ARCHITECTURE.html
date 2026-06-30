@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Studio · 架构与功能介绍（控制平面）</title>
+<style>
+  body { font-family: system-ui, "Segoe UI", "Microsoft YaHei", sans-serif; margin:0; background:#fafafa; color:#222; line-height:1.6; }
+  header { background:#5b2c6f; color:#fff; padding:20px 30px; }
+  header h1 { margin:0; font-size:21px; }
+  header p { margin:6px 0 0; font-size:13px; opacity:.9; }
+  .legend { display:flex; gap:18px; flex-wrap:wrap; padding:14px 30px; background:#fff; border-bottom:1px solid #eee; font-size:13px; }
+  .legend span { display:inline-flex; align-items:center; gap:6px; }
+  .sw { width:14px; height:14px; border-radius:3px; display:inline-block; border:1px solid #999; }
+  .oss{background:#d5f5e3;border-color:#1e8449} .core{background:#fdebd0;border-color:#ca6f1e}
+  .gen{background:#e8daef;border-color:#8e44ad} .human{background:#fadbd8;border-color:#c0392b}
+  .store{background:#d6eaf8;border-color:#2471a3}
+  section { padding:22px 30px; }
+  h2 { font-size:17px; border-left:4px solid #8e44ad; padding-left:10px; }
+  h3 { font-size:14px; color:#5b2c6f; margin-bottom:6px; }
+  .mermaid { background:#fff; border:1px solid #eee; border-radius:8px; padding:16px; overflow:auto; }
+  ul { margin:6px 0; padding-left:20px; }
+  .note { background:#f4ecf7; border:1px solid #d7bde2; border-radius:8px; padding:12px 14px; font-size:14px; }
+  footer { padding:18px 30px; font-size:12px; color:#777; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Studio · 架构与功能介绍（控制平面）</h1>
+  <p>Studio 是「造 chatbot 的工厂」——接入源、生成工具与知识、配权限、评测、发布。它产出配置，交给运行时去跑。</p>
+</header>
+
+<div class="legend">
+  <span><i class="sw core"></i>自建核心</span>
+  <span><i class="sw oss"></i>复用成熟开源</span>
+  <span><i class="sw gen"></i>LLM 生成器（借主模型）</span>
+  <span><i class="sw human"></i>人工审核环节</span>
+  <span><i class="sw store"></i>注册 / 存储</span>
+</div>
+
+<section>
+  <h2>一、先分清两个平面</h2>
+  <pre class="mermaid">
+flowchart LR
+  classDef core fill:#fdebd0,stroke:#ca6f1e,color:#7e5109;
+  classDef store fill:#d6eaf8,stroke:#2471a3,color:#1a5276;
+  classDef oss fill:#d5f5e3,stroke:#1e8449,color:#145a32;
+
+  dev["开发者 / 接入者"]:::core --> CP
+  subgraph CP["Studio = 控制平面 (build-time, 造 bot)"]
+    build["接入 → 生成 → 人工审核 → 评测 → 发布"]:::core
+  end
+  subgraph SH["共享存储"]
+    mr["Manifest 注册表"]:::store
+    cs["知识卡片索引库"]:::store
+    dr["部署注册表"]:::store
+    sk["密钥库"]:::store
+  end
+  subgraph DP["Runtime = 数据平面 (run-time, 跑 bot)"]
+    run["agent_core 承载终端用户对话"]:::oss
+  end
+  CP -->|产出注册| SH
+  DP -->|读取配置卡片| SH
+  euser["终端用户"]:::oss --> DP
+  </pre>
+  <p class="note"><b>关键</b>：Studio（本页）负责<strong>造</strong>，Runtime（之前画的 chatbot 架构）负责<strong>跑</strong>。两者不直接调用，只通过共享存储交接：Studio 产出 manifest + 卡片 + 注册部署，Runtime 据此运行。</p>
+</section>
+
+<section>
+  <h2>二、Studio 整体架构</h2>
+  <pre class="mermaid">
+flowchart TB
+  classDef oss fill:#d5f5e3,stroke:#1e8449,color:#145a32;
+  classDef core fill:#fdebd0,stroke:#ca6f1e,color:#7e5109;
+  classDef gen fill:#e8daef,stroke:#8e44ad,color:#5b2c6f;
+  classDef human fill:#fadbd8,stroke:#c0392b,color:#922b21;
+  classDef store fill:#d6eaf8,stroke:#2471a3,color:#1a5276;
+
+  subgraph UI["Studio 前端 (Authoring UI)"]
+    wiz["配置向导<br/>表单 + chatbot 引导"]:::core
+    srcui["源接入界面"]:::core
+    toolui["工具范围选择<br/>(swagger 聚类视图)"]:::core
+    rbacui["RBAC 矩阵编辑"]:::core
+    cardui["卡片审核界面"]:::core
+    diffui["spec-diff PR 式审核"]:::core
+    evalui["评测面板"]:::core
+  end
+
+  subgraph API["控制面 API"]
+    proj["项目 / bot / 部署管理"]:::core
+    mancrud["Manifest CRUD + 版本化"]:::core
+    orch["构建流水线编排"]:::core
+  end
+
+  subgraph ING["源接入 Ingestion"]
+    gh["GitHub 连接器<br/>(clone + tree-sitter 解析)"]:::oss
+    upl["文件上传处理"]:::core
+    oas["OpenAPI 解析 + minify"]:::oss
+    mcpx["MCP server 自省<br/>(列工具 + schema 摘要)"]:::oss
+  end
+
+  subgraph GEN["生成器 (主 LLM 辅助)"]
+    tgen["工具重塑器<br/>聚类→聚合→裁剪→docstring"]:::gen
+    kgen["知识卡片生成器<br/>分区→起草→溯源"]:::gen
+    pgen["System prompt 组装<br/>纪律骨架 + 槽位"]:::gen
+    rgen["RBAC 建议器"]:::gen
+    egen["Eval 黄金集生成<br/>(+对抗用例)"]:::gen
+  end
+
+  subgraph REV["人工审核 (强制关卡)"]
+    rev["审核队列: 工具 / 卡片 / prompt / 判据 / RBAC<br/>→ 批准并冻结"]:::human
+  end
+
+  subgraph EVAL["评测引擎"]
+    runner["黄金集执行 + gate 判定"]:::core
+    holdout["hold-out 集管理"]:::core
+    redteam["对抗 / 红队<br/>(Giskard / promptfoo)"]:::oss
+  end
+
+  subgraph SYNC["同步 / spec-diff"]
+    watch["spec 变更监听<br/>(poll / webhook)"]:::core
+    diffeng["oasdiff 引擎"]:::oss
+    impact["影响分析<br/>(source_refs 反查受影响工具/卡片)"]:::core
+  end
+
+  subgraph DEP["发布"]
+    promote["promote staging→prod<br/>(eval gate 卡关)"]:::core
+    rollback["版本回滚"]:::core
+  end
+
+  subgraph REG["注册 / 存储"]
+    manreg["Manifest 注册表<br/>(版本 / 不可变摘要)"]:::store
+    depreg["部署注册表<br/>(deployment_id → digest)"]:::store
+    cardstore["知识卡片索引库"]:::store
+    snap["spec 快照 (供 diff)"]:::store
+    sec["密钥库 (*_ref)"]:::store
+  end
+
+  subgraph INFRA["基础设施"]
+    pg["PostgreSQL"]:::oss
+    queue["Celery + Redis"]:::oss
+    objs["对象存储 (上传物)"]:::oss
+    obs["可观测"]:::oss
+  end
+
+  UI --> API
+  API --> ING --> GEN --> REV --> EVAL --> DEP
+  GEN --> REG
+  REV --> REG
+  DEP --> depreg
+  SYNC --> impact
+  watch --> diffeng --> impact
+  impact --> REV
+  API -.-> REG
+  API -.-> INFRA
+  </pre>
+
+  <h3>逐块说明</h3>
+  <ul>
+    <li><b>Studio 前端</b>：造 bot 的操作台——配置向导（表单或对话式引导）、源接入、工具范围勾选、RBAC 编辑、卡片审核、spec-diff 审核、评测面板。</li>
+    <li><b>控制面 API</b>：管理项目/bot/部署，负责 Manifest 的增删改与版本化，并编排整条构建流水线。</li>
+    <li><b>源接入</b>：把外部输入拉进来——GitHub 代码（解析结构）、上传文件、swagger（解析并精简）、MCP server（自省出工具与 schema 摘要）。</li>
+    <li><b>生成器（主 LLM 辅助）</b>：用强模型把源转成产物——重塑工具、起草知识卡片、组装 system prompt、建议 RBAC、生成评测黄金集。<b>只起草，不直接生效。</b></li>
+    <li><b>人工审核（强制关卡）</b>：所有生成产物（工具/卡片/prompt/判据/RBAC）必须人工批准并冻结后才可用——防止生成内容把错误当权威。</li>
+    <li><b>评测引擎</b>：用黄金集跑候选部署、判定 gate；管理 hold-out 集；接入对抗/红队工具。</li>
+    <li><b>同步 / spec-diff</b>：监听接口/代码变更 → oasdiff 出差异 → 按来源反查受影响的工具与卡片 → 回流到人工审核重建。</li>
+    <li><b>发布</b>：过了评测才能 promote 到生产；支持回滚。</li>
+    <li><b>注册 / 存储</b>：Studio 的产出落点，也是与 Runtime 的交接点——Manifest 注册表、部署注册表、卡片索引库、spec 快照、密钥库。</li>
+    <li><b>基础设施</b>：数据库、异步队列、对象存储、可观测，均为现成组件。</li>
+  </ul>
+</section>
+
+<section>
+  <h2>三、造一个 bot 的流程</h2>
+  <pre class="mermaid">
+flowchart LR
+  classDef core fill:#fdebd0,stroke:#ca6f1e,color:#7e5109;
+  classDef gen fill:#e8daef,stroke:#8e44ad,color:#5b2c6f;
+  classDef human fill:#fadbd8,stroke:#c0392b,color:#922b21;
+  classDef store fill:#d6eaf8,stroke:#2471a3,color:#1a5276;
+
+  S1["① 接入源<br/>GitHub / 上传 / swagger / MCP"]:::core
+  S2["② 生成工具<br/>聚类→重塑"]:::gen
+  S3["③ 生成知识卡片<br/>分区→起草"]:::gen
+  S4["④ 组装 prompt + 配 RBAC"]:::gen
+  S5["⑤ 人工审核冻结"]:::human
+  S6["⑥ 生成/采集黄金集 + 跑评测 gate"]:::core
+  S7["⑦ 组装 Manifest 并注册"]:::store
+  S8["⑧ 发布 staging→prod"]:::core
+  S9["⑨ 上线后 spec-diff 监控 → 增量更新"]:::core
+
+  S1 --> S2 --> S3 --> S4 --> S5 --> S6 --> S7 --> S8 --> S9
+  S9 -.触发重建.-> S5
+  </pre>
+  <p class="note">流程主线：<b>接入 → LLM 生成 → 人工审核 → 评测 → 注册 → 发布</b>，上线后由 spec-diff 闭环保持与源同步。每个生成产物都必须经人工审核与评测 gate 才能进入生产。</p>
+</section>
+
+<section>
+  <h2>四、一句话概括</h2>
+  <p class="note">Studio 是<strong>控制平面</strong>：把外部源经「LLM 生成 + 人工审核 + 评测」变成一份可版本化的配置与知识库，注册后交给<strong>数据平面（Runtime）</strong>去跑。它造 bot，不跑 bot。</p>
+</section>
+
+<footer>由设计讨论生成 · 整个 Studio 属 Post-MVP（路线图 P6），本图为目标架构 · 如需离线渲染，将末尾 mermaid 脚本替换为本地文件。</footer>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: true, theme: 'default', flowchart: { htmlLabels: true, useMaxWidth: true } });
+</script>
+</body>
+</html>

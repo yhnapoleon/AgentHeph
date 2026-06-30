@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Guide Chatbot · 综合架构（含 KB 构建与 UI 摄取）</title>
+<style>
+  body { font-family: system-ui, "Segoe UI", "Microsoft YaHei", sans-serif; margin:0; background:#fafafa; color:#222; line-height:1.65; }
+  header { background:#7d6608; color:#fff; padding:22px 30px; }
+  header h1 { margin:0; font-size:22px; }
+  header p { margin:8px 0 0; font-size:13px; opacity:.92; }
+  nav.toc { background:#fff; border-bottom:1px solid #eee; padding:12px 30px; font-size:13px; }
+  nav.toc a { color:#7d6608; margin-right:16px; text-decoration:none; }
+  .legend { display:flex; gap:16px; flex-wrap:wrap; padding:12px 30px; background:#fbf7e8; border-bottom:1px solid #eee; font-size:13px; }
+  .legend span { display:inline-flex; align-items:center; gap:6px; }
+  .sw { width:14px; height:14px; border-radius:3px; display:inline-block; border:1px solid #999; }
+  .oss{background:#d5f5e3;border-color:#1e8449} .bau{background:#d6eaf8;border-color:#2471a3}
+  .core{background:#fdebd0;border-color:#ca6f1e} .emph{background:#fcf3cf;border-color:#b7950b}
+  .gen{background:#e8daef;border-color:#8e44ad} .human{background:#fadbd8;border-color:#c0392b}
+  .later{background:#f2f3f4;border-color:#909497}
+  section { padding:22px 30px; border-bottom:1px solid #f0f0f0; }
+  h2 { font-size:18px; border-left:4px solid #b7950b; padding-left:10px; }
+  h3 { font-size:14px; color:#7d6608; margin:14px 0 6px; }
+  .mermaid { background:#fff; border:1px solid #eee; border-radius:8px; padding:16px; overflow:auto; }
+  table { border-collapse:collapse; width:100%; font-size:13.5px; margin:8px 0; background:#fff; }
+  th,td { border:1px solid #e5e5e5; padding:8px 10px; text-align:left; vertical-align:top; }
+  th { background:#f4eecf; }
+  ul { margin:6px 0; padding-left:20px; }
+  code { background:#f3f0e7; padding:1px 5px; border-radius:4px; font-size:12.5px; }
+  pre.json { background:#2d2d2d; color:#e6e6e6; padding:14px; border-radius:8px; overflow:auto; font-size:12.5px; }
+  .note { background:#fcf9e8; border:1px solid #f0e2a8; border-radius:8px; padding:12px 14px; font-size:14px; }
+  .key { background:#eafaf1; border:1px solid #abebc6; border-radius:8px; padding:12px 14px; font-size:14px; }
+  footer { padding:18px 30px; font-size:12px; color:#777; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Guide Chatbot · 综合架构</h1>
+  <p>面向内部系统的「讲解型」AI 助手：按权限解释功能、说明字段、指引导航；回答只基于知识库、绝不编造。本页汇总全部 guide 相关设计（含 KB 构建与 UI 摄取）。</p>
+</header>
+
+<nav class="toc">
+  <a href="#types">① 三种类型</a>
+  <a href="#func">② 功能</a>
+  <a href="#kb">③ KB 是核心</a>
+  <a href="#source">④ 源:UI 优先</a>
+  <a href="#read">⑤ 怎么读 UI</a>
+  <a href="#cluster">⑥ 聚类策略</a>
+  <a href="#arch">⑦ 运行时架构</a>
+  <a href="#flow">⑧ 问答流程</a>
+  <a href="#build">⑨ Studio(构建)</a>
+  <a href="#frontend">⑩ 不同前端不同读法</a>
+  <a href="#sync">⑪ UI-diff 同步</a>
+  <a href="#rule">⑫ 红线</a>
+</nav>
+
+<div class="legend">
+  <span><i class="sw core"></i>自建核心</span>
+  <span><i class="sw oss"></i>复用开源</span>
+  <span><i class="sw bau"></i>已有可复用</span>
+  <span><i class="sw emph"></i>知识层(核心)</span>
+  <span><i class="sw gen"></i>LLM 生成</span>
+  <span><i class="sw human"></i>人工审核</span>
+  <span><i class="sw later"></i>可选/前端</span>
+</div>
+
+<section id="types">
+  <h2>① 三种 chatbot 类型 —— 由用户在前端选择</h2>
+  <p>同一套平台支持三种能力档位，<b>在 Studio 前端由接入者勾选</b>（本质是 manifest 的 <code>capabilities</code> 字段）。选哪种，决定了读哪些源、装哪些工具、是否挂写路径。</p>
+  <table>
+    <tr><th>类型</th><th>能做什么</th><th>主源</th><th>是否需要</th></tr>
+    <tr><td><b>Guide（本页）</b></td><td>讲解功能、说明字段、指引导航</td><td><b>前端 UI</b>（次源 swagger）</td><td>只读知识；行级权限可选</td></tr>
+    <tr><td>Assistant（只读）</td><td>查询/分析平台数据</td><td>swagger / 数据 API + 代码</td><td>只读数据工具 + per-row 行级权限</td></tr>
+    <tr><td>Edit</td><td>在人工确认后改数据/配置</td><td>同上 + 写接口</td><td>写双门 + 草案确认 + executor 复核</td></tr>
+  </table>
+  <p class="key"><b>关键洞察</b>：三者主源不同——<b>Guide 读 UI（用户能做什么、在哪做），Assistant/Edit 读 API（有哪些数据操作）</b>。所以"选类型"不只是开关功能，它直接决定 KB 的构建方式。</p>
+</section>
+
+<section id="func">
+  <h2>② Guide 能做什么</h2>
+  <ul>
+    <li><b>功能讲解</b>：这个功能怎么用 / 这个页面做什么 —— 基于真实页面与字段。</li>
+    <li><b>字段与枚举释义</b>：这个字段什么意思 / 能填什么 / 这个状态值代表什么。</li>
+    <li><b>导航指引</b>：某功能在哪里 —— 直接给跳转链接带用户过去。</li>
+    <li><b>只读数据查询（可选）</b>：需要时查数据，按用户权限过滤可见范围。</li>
+    <li><b>权限感知 + 诚实作答</b>：只讲用户有权限看的；没有记录就说"未记录"，不臆造步骤。</li>
+  </ul>
+  <p class="note">边界：<b>只读、只讲解</b>，不改任何数据、不执行任何变更。</p>
+</section>
+
+<section id="kb">
+  <h2>③ KB 是 Guide 的核心（双读者 + 三类知识）</h2>
+  <p>Guide 的回答几乎都来自知识库（KB），所以 KB 构建是重中之重。要点：</p>
+  <ul>
+    <li><b>一卡两读者</b>：每张卡的 <code>body_md</code> 给<b>用户</b>讲解；卡的 <code>related_tools</code> + 字段/enum 语义给 <b>agent</b> 用来选工具/取数。一次构建，两处复用。</li>
+    <li><b>三类知识分开</b>：①功能/UI 知识（怎么用，归卡片）②实时业务数据（具体值，归数据工具，<b>绝不进卡片</b>）③能力/路由（调哪个工具）。Guide 主攻①。</li>
+    <li><b>分区结构化卡片，不做内容向量 RAG</b>：按业务实体切成精确小卡，用 tool-calling 按需精确取；可审计、可溯源、省 token。</li>
+  </ul>
+</section>
+
+<section id="source">
+  <h2>④ 源：UI 优先，swagger 降为增强（核心修正）</h2>
+  <p class="key">swagger 告诉你"有哪些<b>数据操作</b>"，UI 才告诉你"用户能做什么、在哪做、字段填什么"——后者才是 guide 要教的。<b>所以 guide 的主源是前端 UI；swagger/代码降为次源</b>，仅用于增强字段的取值枚举与校验规则。</p>
+  <table>
+    <tr><th>UI 知识构成</th><th>回答什么问题</th></tr>
+    <tr><td>导航结构（路由/菜单/tab）</td><td>"X 在哪" + 生成跳转</td></tr>
+    <tr><td>可交互组件（按钮/表单/筛选/开关/表格/弹窗）</td><td>"这里能做什么"</td></tr>
+    <tr><td>字段语义（label/placeholder/tooltip/帮助/校验提示）</td><td>"这个字段什么意思/能填什么"</td></tr>
+    <tr><td>流程（多步向导、点完之后发生什么）</td><td>"怎么做 X"</td></tr>
+    <tr><td>条件/权限（按钮何时禁用、哪个角色可见）</td><td>权限可见性 + "你没权限做 X"</td></tr>
+  </table>
+</section>
+
+<section id="read">
+  <h2>⑤ 怎么读 UI —— 三层叠加（结构 → 真相 → 描述）</h2>
+  <table>
+    <tr><th>层</th><th>方法</th><th>拿到什么</th><th>性质</th></tr>
+    <tr><td><b>A 静态解析（主干）</b></td><td>tree-sitter/babel 解析前端源</td><td>路由表(页面/tab/deeplink)、组件→label/onClick、表单字段(zod/yup/RHF schema)、<b>i18n 文案</b>(用户可见词汇金矿)</td><td>确定、便宜、稳定 ID</td></tr>
+    <tr><td><b>B 运行时爬取（地面真相）</b></td><td>Playwright 抓<b>无障碍树</b>+DOM</td><td>真实渲染的可交互元素(role=button/textbox/tab…框架无关)、可见文本、testid、截图、真实 URL</td><td>抓条件渲染真相；<b>复用 webapp-testing skill</b></td></tr>
+    <tr><td><b>C 视觉理解（补描述）</b></td><td>截图喂多模态模型</td><td>"这页做什么/这控件干嘛"的自然语言描述</td><td>补 A/B；<b>复用 BAU vision 模型</b></td></tr>
+  </table>
+  <p class="note"><b>推荐组合 A+B+C</b>：A 给结构骨架与稳定主键，B 给真实可交互元素与 deeplink（<b>无障碍树是被低估的关键</b>——它本就是语义化界面地图），C 补描述。每个抽取元素都带 provenance（路由/组件 id/testid），供卡片溯源与 UI-diff。</p>
+</section>
+
+<section id="cluster">
+  <h2>⑥ 功能聚类策略怎么生成</h2>
+  <ol>
+    <li><b>用导航树做种子</b>（确定性主干）：顶层路由/菜单天然是候选分区——UI 导航本就是产品设计好的人类聚类，直接拿。</li>
+    <li><b>LLM 精炼</b>：喂 导航树 + 组件清单 + 实体模型，产出<b>按 domain/entity 归并</b>的聚类（合并同实体页面、拆分过大页面）。</li>
+    <li><b>主键去 UI 化</b>：area 用领域名（如 <code>issue_management</code>），UI 页面只作 <code>source_ref</code>——tab 改名不塌分区。</li>
+    <li><b>人工审核</b>：聚类决定整个 KB 结构与 <code>app_knowledge</code> 的 enum，必须人审冻结。</li>
+    <li><b>eval 验证粒度</b>：测"在哪/怎么用"是否路由到对的 area；准确率低或 area 过大就拆。<b>粒度由 eval 定，不是固定阈值</b>。</li>
+  </ol>
+  <p>经验粒度：一个 area ≈ 一个顶层导航区/连贯任务域；area 内再按 kind（feature/howto/navigation/field）切卡。</p>
+
+  <h3>一张 guide 卡示例（provenance 指向 UI，swagger 仅增强）</h3>
+  <pre class="json">{
+  "area": "issue_management",
+  "kind": "howto",
+  "title": "按 SLA 风险筛选工单",
+  "body_md": "在 Issues 页勾选 'SLA risk only'，列表按截止时间升序只显示未关单…",
+  "related_tools": ["app_knowledge", "nav:issues"],
+  "source_refs": [
+    {"type":"route","path":"/issues"},
+    {"type":"component","id":"IssuesTab/SlaRiskFilter","testid":"sla-risk-toggle"},
+    {"type":"i18n","key":"issues.filter.slaRisk"},
+    {"type":"swagger","path":"/issues","note":"取 status 枚举值增强"}
+  ],
+  "content_hash": "sha256:…"
+}</pre>
+</section>
+
+<section id="arch">
+  <h2>⑦ 运行时架构（数据平面 · 跑 bot）</h2>
+  <pre class="mermaid">
+flowchart TB
+  classDef oss fill:#d5f5e3,stroke:#1e8449,color:#145a32;
+  classDef bau fill:#d6eaf8,stroke:#2471a3,color:#1a5276;
+  classDef core fill:#fdebd0,stroke:#ca6f1e,color:#7e5109;
+  classDef emph fill:#fcf3cf,stroke:#b7950b,color:#7d6608,stroke-width:3px;
+  classDef later fill:#f2f3f4,stroke:#909497,color:#566573,stroke-dasharray:5 3;
+
+  subgraph L0["前端层"]
+    chatui["Chat UI + 流式渲染器"]:::later
+  end
+  subgraph L1["接入 / 契约层"]
+    contract["SSE 流式契约 (无写事件)"]:::core
+    resolver["deployment_id → 锁定配置版本"]:::core
+  end
+  subgraph L2["运行时引擎 (agent_core)"]
+    manifest["配置加载与校验"]:::core
+    lggraph["LangGraph ReAct 对话循环"]:::oss
+    providers["插件接口 (工具/知识/权限)"]:::core
+    gov["工具治理 (去重/上限/旁路)"]:::bau
+    llm["LLM 接入工厂"]:::bau
+    guard["只读准入 (仅装只读工具)"]:::core
+  end
+  subgraph L3["插件层 (app 提供)"]
+    toolprov["只读工具 Provider"]:::bau
+    knowprov["知识 Provider"]:::bau
+    authad["权限适配器 (可见性 +可选行级)"]:::core
+  end
+  subgraph L4["知识层 ★ 核心"]
+    cards["分区知识卡片 (按业务实体, 带溯源)"]:::emph
+    appknow["知识检索工具 (按分区取卡)"]:::emph
+    nav["导航/跳转链接生成"]:::emph
+    kstore["索引存储 (Postgres FTS / SQLite FTS5)"]:::oss
+  end
+  subgraph L5["源摄取层 (build-time, 见⑤⑨)"]
+    uiing["UI 摄取 A静态+B爬取+C视觉"]:::core
+    swag["swagger/表单schema (增强次源)"]:::later
+  end
+  subgraph L6["质量与安全"]
+    evalg["评测闸门 (不编造/卡片溯源/不臆造/权限)"]:::core
+    audit["对话审计"]:::bau
+  end
+  subgraph L7["基础设施"]
+    pg["PostgreSQL / 全文检索"]:::oss
+    obs["可观测 (OTel / Langfuse)"]:::oss
+  end
+
+  L0 --> L1 --> L2 --> L3 --> L4
+  L5 -->|构建期产出卡片| L4
+  L2 --> L6
+  L2 -.->|依赖| L7
+  </pre>
+</section>
+
+<section id="flow">
+  <h2>⑧ 一次问答的流程（运行时，只读）</h2>
+  <pre class="mermaid">
+flowchart TD
+  classDef bau fill:#d6eaf8,stroke:#2471a3,color:#1a5276;
+  classDef core fill:#fdebd0,stroke:#ca6f1e,color:#7e5109;
+  classDef oss fill:#d5f5e3,stroke:#1e8449,color:#145a32;
+  classDef emph fill:#fcf3cf,stroke:#b7950b,color:#7d6608,stroke-width:3px;
+
+  A["用户提问 + 指定助手"]:::bau --> B["锁定配置版本, 建图<br/>按权限裁剪可见知识/工具"]:::core
+  B --> C{"助手自主选择动作"}:::oss
+  C -->|怎么用、字段含义、这是什么| K["取对应知识卡片"]:::emph
+  C -->|某功能在哪| N["生成跳转链接"]:::emph
+  C -->|需要查数据 可选| T["调用只读工具"]:::bau
+  T --> DS["按用户权限过滤数据"]:::core
+  DS --> C
+  K --> C
+  N --> C
+  C -->|信息足够| ANS["组答: 只依据卡片/数据<br/>没记录则说'未记录', 不臆造"]:::core
+  ANS --> DONE["流式返回"]:::bau
+  </pre>
+</section>
+
+<section id="build">
+  <h2>⑨ Studio 控制平面 · Guide 在哪被构建（build-time）</h2>
+  <p>前面⑦⑧是<b>运行时（跑 bot）</b>；guide 的 KB 是在 <b>Studio 控制平面（造 bot）</b>里构建出来的。两者通过共享存储交接：Studio 产出卡片+配置并注册，运行时只读消费。</p>
+
+  <h3>两平面关系</h3>
+  <pre class="mermaid">
+flowchart LR
+  classDef core fill:#fdebd0,stroke:#ca6f1e,color:#7e5109;
+  classDef store fill:#d6eaf8,stroke:#2471a3,color:#1a5276;
+  classDef oss fill:#d5f5e3,stroke:#1e8449,color:#145a32;
+  classDef emph fill:#fcf3cf,stroke:#b7950b,color:#7d6608,stroke-width:3px;
+
+  dev["接入者"]:::core --> ST
+  subgraph ST["Studio 控制平面 (build-time, 造 bot)"]
+    stp["UI 摄取 → 聚类 → 生成卡片 → 人工审核 → 评测 → 发布"]:::core
+  end
+  subgraph SH["共享存储"]
+    cs["知识卡片索引库"]:::emph
+    mr["Manifest 注册表"]:::store
+    dr["部署注册表"]:::store
+  end
+  subgraph RT["Runtime 数据平面 (run-time, 跑 guide bot)"]
+    rt["agent_core 只读运行 (⑦⑧)"]:::oss
+  end
+  ST -->|产出卡片并注册| SH
+  RT -->|读取卡片与配置| SH
+  euser["终端用户"]:::oss --> RT
+  </pre>
+
+  <h3>Studio 架构（guide 版 · 重心在 UI 摄取与卡片生成）</h3>
+  <pre class="mermaid">
+flowchart TB
+  classDef core fill:#fdebd0,stroke:#ca6f1e,color:#7e5109;
+  classDef oss fill:#d5f5e3,stroke:#1e8449,color:#145a32;
+  classDef gen2 fill:#e8daef,stroke:#8e44ad,color:#5b2c6f;
+  classDef human2 fill:#fadbd8,stroke:#c0392b,color:#922b21;
+  classDef store2 fill:#d6eaf8,stroke:#2471a3,color:#1a5276;
+  classDef emph2 fill:#fcf3cf,stroke:#b7950b,color:#7d6608,stroke-width:3px;
+  classDef later2 fill:#f2f3f4,stroke:#909497,color:#566573,stroke-dasharray:5 3;
+
+  subgraph UIA["Studio 前端 (authoring)"]
+    wiz["配置向导 (选 guide 类型)"]:::core
+    srcui["UI 源接入界面"]:::core
+    clui["聚类审核"]:::core
+    cardui["卡片审核界面"]:::core
+    evalui["评测面板"]:::core
+  end
+  subgraph APIA["控制面 API"]
+    proj["项目 / 部署管理"]:::core
+    mancrud["Manifest 版本化"]:::core
+    orch["流水线编排"]:::core
+  end
+  subgraph INGA["UI 源摄取 ★ guide 主源"]
+    sa["A 静态解析<br/>路由/组件/表单/i18n"]:::emph2
+    sb["B Playwright 无障碍树+截图"]:::emph2
+    sc["C 视觉描述"]:::emph2
+    sw["swagger 增强 (次源)"]:::later2
+  end
+  subgraph GENA["生成器 (LLM)"]
+    cl["聚类器<br/>导航树→domain 主键"]:::gen2
+    cg["卡片生成<br/>feature/howto/nav/field"]:::gen2
+    pg2["prompt 组装"]:::gen2
+    eg["eval 黄金集生成"]:::gen2
+  end
+  subgraph REVA["人工审核 (强制)"]
+    rv["聚类 / 卡片 / prompt / 判据 → 批准冻结"]:::human2
+  end
+  subgraph EVA["评测引擎"]
+    rn["黄金集 + gate"]:::core
+  end
+  subgraph SYA["UI-diff 同步 (见⑪)"]
+    wt["UI 清单快照 + diff"]:::core
+    im["影响反查 → 受影响卡片"]:::core
+  end
+  subgraph REGA["注册 / 存储"]
+    cardstore["知识卡片索引库"]:::emph2
+    manreg["Manifest 注册表"]:::store2
+    uisnap["UI 清单快照"]:::store2
+  end
+
+  UIA --> APIA --> INGA --> GENA --> REVA --> EVA
+  GENA --> REGA
+  REVA --> REGA
+  wt --> im --> REVA
+  </pre>
+  <p class="note">guide 版 Studio 与通用版的区别：<b>源接入以 UI 摄取(A/B/C)为主、swagger 为次</b>；生成器重心在<b>聚类 + 卡片生成</b>（而非工具重塑）；同步走 <b>UI-diff</b>。通用全类型 Studio 架构见 <code>STUDIO_ARCHITECTURE.html</code>。</p>
+
+  <h3>KB 构建管线（Studio 内的工作流）</h3>
+  <pre class="mermaid">
+flowchart LR
+  classDef core fill:#fdebd0,stroke:#ca6f1e,color:#7e5109;
+  classDef gen fill:#e8daef,stroke:#8e44ad,color:#5b2c6f;
+  classDef human fill:#fadbd8,stroke:#c0392b,color:#922b21;
+  classDef store fill:#d6eaf8,stroke:#2471a3,color:#1a5276;
+  classDef later fill:#f2f3f4,stroke:#909497,color:#566573,stroke-dasharray:5 3;
+
+  UIsrc["前端源 + 运行中的 app"]:::core
+  UIsrc --> SA["A 静态解析<br/>路由/组件/表单/i18n"]:::core
+  UIsrc --> SB["B Playwright 爬取<br/>无障碍树+截图+deeplink"]:::core
+  UIsrc --> SC["C 视觉理解<br/>截图→描述"]:::core
+  SA --> INV["UI 清单 (带 provenance)"]:::store
+  SB --> INV
+  SC --> INV
+  INV --> CL["聚类: 导航树种子→LLM精炼→domain主键"]:::gen
+  CL --> GENC["LLM 起草卡片<br/>feature/howto/nav/field"]:::gen
+  swag2["swagger/表单schema (次源)"]:::later -.增强 enum/校验.-> GENC
+  GENC --> REVC["人工审核冻结"]:::human
+  REVC --> IDX["卡片索引库 (hash + source_refs)"]:::store
+  INV --> SNAP["UI 清单快照"]:::store
+  SNAP --> DIFF["UI-diff 监控 (见⑪)"]:::core
+  DIFF -.受影响卡片.-> REVC
+  </pre>
+  <p class="note">主线：<b>UI 摄取(A/B/C) → 汇总 UI 清单 → 聚类 → LLM 起草卡片 → 人工审核 → 入索引库</b>。swagger 仅在 field/enum 卡上做增强。</p>
+</section>
+
+<section id="frontend">
+  <h2>⑩ 不同前端 → 不同读法</h2>
+  <p>"怎么读 UI"高度依赖前端技术栈。摄取器应做成可插拔，按前端类型选策略：</p>
+  <table>
+    <tr><th>前端类型</th><th>静态解析(A)</th><th>运行时(B)/视觉(C)</th></tr>
+    <tr><td>React/Vue SPA（如 BAU）</td><td>解析 JSX/SFC + router + i18n + 表单 schema</td><td>Playwright 无障碍树为主</td></tr>
+    <tr><td>Angular</td><td>解析模板 + 路由模块 + i18n</td><td>同上</td></tr>
+    <tr><td>服务端渲染（Jinja/Rails/Thymeleaf）</td><td>解析模板文件 + 路由定义</td><td>DOM 爬取为主</td></tr>
+    <tr><td>移动端 App</td><td>解析布局/资源串(若有源)</td><td><b>无障碍树 + 视觉为主</b></td></tr>
+    <tr><td>无源码 / 遗留系统</td><td>—</td><td><b>仅 Playwright 无障碍树 + 视觉</b>（黑盒摄取）</td></tr>
+  </table>
+  <p class="key">设计含义：UI 摄取器是一组<b>按前端类型可插拔的适配器</b>，统一输出同一份"UI 清单"schema，后续聚类/生成/审核流程与前端无关。</p>
+</section>
+
+<section id="sync">
+  <h2>⑪ 同步：spec-diff 变成 UI-diff</h2>
+  <p>Guide 的源是 UI，所以同步机制也变：oasdiff 这类 swagger 差异工具不够用。改为对<b>"UI 清单"（路由/组件/i18n/表单字段集合）打快照、做 diff</b>：</p>
+  <ul>
+    <li>前端变更（路由新增 / 组件删除 / label 改名）→ UI 清单重算 → 与快照 diff；</li>
+    <li>按 <code>source_refs</code> 反查<b>受影响卡片</b> → 标记陈旧 → 回流人工审核重建。</li>
+  </ul>
+  <p>机制与原 spec-diff 同构（快照 + hash + 反查），只是 diff 对象从 OpenAPI 换成 UI 清单。</p>
+</section>
+
+<section id="rule">
+  <h2>⑫ 最该守的红线</h2>
+  <p class="key">写没了，但 guide 是散文密集的回答，模型最爱"按见过的同类系统编造功能/步骤"。所以红线集中在：<br/>
+  <b>答案只能基于取到的卡片；卡片里没有的功能/步骤/字段一律说"系统未记录"，绝不用常识脑补一套看似合理的操作流程。</b>这条进 eval 卡关（问一个不存在的功能，看它会不会编）。</p>
+</section>
+
+<section>
+  <h2>一句话概括</h2>
+  <p class="key">Guide 助手 = 通用引擎只读运行 + <b>KB 为核心</b>；KB 的源是<b>前端 UI（A静态/B爬取/C视觉，按前端类型可插拔）</b>、swagger 仅增强；按导航树聚类成领域分区、LLM 起草 + 人工审核成卡片；运行时按权限取卡作答、<b>只讲卡片有的、绝不编造</b>。三种类型（guide/只读/edit）在前端由用户选，选 guide 就走这条 UI 优先的构建路径。</p>
+</section>
+
+<footer>由设计讨论汇总生成（合并自原 GUIDE_ARCHITECTURE.md/.html）· Studio/KB 构建属 build-time，运行时只读 · 离线渲染请将 mermaid 脚本换为本地文件。</footer>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: true, theme: 'default', flowchart: { htmlLabels: true, useMaxWidth: true } });
+</script>
+</body>
+</html>

@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Guide Chatbot · Architecture (with UI-to-KB pipeline)</title>
+<style>
+  body { font-family: system-ui, "Segoe UI", sans-serif; margin:0; background:#fafafa; color:#222; line-height:1.65; }
+  header { background:#7d6608; color:#fff; padding:22px 30px; }
+  header h1 { margin:0; font-size:22px; }
+  header p { margin:8px 0 0; font-size:13px; opacity:.92; }
+  nav.toc { background:#fff; border-bottom:1px solid #eee; padding:12px 30px; font-size:12.5px; }
+  nav.toc a { color:#7d6608; margin-right:14px; text-decoration:none; white-space:nowrap; }
+  .legend { display:flex; gap:16px; flex-wrap:wrap; padding:12px 30px; background:#fbf7e8; border-bottom:1px solid #eee; font-size:13px; }
+  .legend span { display:inline-flex; align-items:center; gap:6px; }
+  .sw { width:14px; height:14px; border-radius:3px; display:inline-block; border:1px solid #999; }
+  .oss{background:#d5f5e3;border-color:#1e8449} .bau{background:#d6eaf8;border-color:#2471a3}
+  .core{background:#fdebd0;border-color:#ca6f1e} .emph{background:#fcf3cf;border-color:#b7950b}
+  .gen{background:#e8daef;border-color:#8e44ad} .human{background:#fadbd8;border-color:#c0392b}
+  .later{background:#f2f3f4;border-color:#909497}
+  section { padding:22px 30px; border-bottom:1px solid #f0f0f0; }
+  h2 { font-size:18px; border-left:4px solid #b7950b; padding-left:10px; }
+  h3 { font-size:14px; color:#7d6608; margin:14px 0 6px; }
+  .mermaid { background:#fff; border:1px solid #eee; border-radius:8px; padding:16px; overflow:auto; }
+  table { border-collapse:collapse; width:100%; font-size:13px; margin:8px 0; background:#fff; }
+  th,td { border:1px solid #e5e5e5; padding:7px 9px; text-align:left; vertical-align:top; }
+  th { background:#f4eecf; }
+  ul,ol { margin:6px 0; padding-left:20px; }
+  code { background:#f3f0e7; padding:1px 5px; border-radius:4px; font-size:12.5px; }
+  pre.json { background:#2d2d2d; color:#e6e6e6; padding:14px; border-radius:8px; overflow:auto; font-size:12.5px; }
+  .note { background:#fcf9e8; border:1px solid #f0e2a8; border-radius:8px; padding:12px 14px; font-size:14px; }
+  .key { background:#eafaf1; border:1px solid #abebc6; border-radius:8px; padding:12px 14px; font-size:14px; }
+  footer { padding:18px 30px; font-size:12px; color:#777; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Guide Chatbot &middot; Architecture</h1>
+  <p>A read-only "explainer" assistant for an internal app: explains features, fields and navigation by user permission; answers strictly from the knowledge base, never fabricates. Includes the full UI&rarr;KB build pipeline.</p>
+</header>
+
+<nav class="toc">
+  <a href="#types">1 Bot types</a>
+  <a href="#func">2 Functions</a>
+  <a href="#kb">3 KB is core</a>
+  <a href="#source">4 UI-first source</a>
+  <a href="#inputs">5 Inputs &amp; RBAC-first</a>
+  <a href="#pipeline">6 Studio &amp; pipeline</a>
+  <a href="#srcbranch">7 Source branch</a>
+  <a href="#apibranch">8 OpenAPI branch</a>
+  <a href="#runtime">9 Runtime scan</a>
+  <a href="#inventory">10 UI Inventory</a>
+  <a href="#evidence">11 Evidence</a>
+  <a href="#cards">12 Cards</a>
+  <a href="#review">13 Review</a>
+  <a href="#eval">14 Eval gate</a>
+  <a href="#release">15 Release &amp; diff</a>
+  <a href="#rt">16 Runtime arch</a>
+  <a href="#tools">17 Tooling</a>
+</nav>
+
+<div class="legend">
+  <span><i class="sw core"></i>Self-built core</span>
+  <span><i class="sw oss"></i>Reused OSS</span>
+  <span><i class="sw bau"></i>Reusable existing</span>
+  <span><i class="sw emph"></i>Knowledge layer (focus)</span>
+  <span><i class="sw gen"></i>LLM generation</span>
+  <span><i class="sw human"></i>Human review</span>
+  <span><i class="sw later"></i>Optional / frontend</span>
+</div>
+
+<section id="types">
+  <h2>1. Three bot types &mdash; selected by the user in the frontend</h2>
+  <p>One platform, three capability tiers, chosen by the integrator in Studio (the manifest <code>capabilities</code> field). The choice decides which sources are read, which tools are loaded, and whether a write path exists.</p>
+  <table>
+    <tr><th>Type</th><th>Can do</th><th>Primary source</th><th>Needs</th></tr>
+    <tr><td><b>Guide (this doc)</b></td><td>Explain features, fields, navigation</td><td><b>Frontend UI</b> (OpenAPI secondary)</td><td>Read-only knowledge; row-level RBAC optional</td></tr>
+    <tr><td>Assistant (read-only)</td><td>Query / analyze platform data</td><td>OpenAPI / data API + code</td><td>Read-only data tools + per-row RBAC</td></tr>
+    <tr><td>Edit</td><td>Change data after human confirmation</td><td>Above + write endpoints</td><td>Write double-gate + proposal + executor recheck</td></tr>
+  </table>
+  <p class="key"><b>Key insight</b>: the primary source differs &mdash; <b>Guide reads the UI</b> (what a user can do and where), <b>Assistant/Edit read the API</b> (what data operations exist). So "pick a type" directly determines how the KB is built.</p>
+</section>
+
+<section id="func">
+  <h2>2. What Guide does</h2>
+  <ul>
+    <li><b>Feature explanation</b>: how a feature works / what a page is for &mdash; grounded in real pages and fields.</li>
+    <li><b>Field &amp; enum meaning</b>: what a field means / what values are allowed / what a status value represents.</li>
+    <li><b>Navigation</b>: where a feature lives &mdash; returns a deep link.</li>
+    <li><b>Read-only data lookup (optional)</b>: query data when needed, filtered by the user's permissions.</li>
+    <li><b>Permission-aware + honest</b>: only shows what the user may see; says "not recorded" when unknown, never invents steps.</li>
+  </ul>
+  <p class="note">Boundary: <b>read-only, explanation-only</b> &mdash; never modifies data, never performs an action.</p>
+</section>
+
+<section id="kb">
+  <h2>3. The KB is Guide's core</h2>
+  <ul>
+    <li><b>One card, two readers</b>: a card's <code>body_md</code> explains to the <b>user</b>; its <code>related_tools</code> + field/enum semantics let the <b>agent</b> pick tools / build queries. Build once, reuse twice.</li>
+    <li><b>Three knowledge types kept apart</b>: (1) feature/UI knowledge (how-to &rarr; cards) (2) live business data (values &rarr; data tools, <b>never in cards</b>) (3) capability/routing (which tool). Guide focuses on (1).</li>
+    <li><b>Partitioned structured cards, no content vector RAG</b>: precise small cards by business entity, fetched on demand via tool-calling &mdash; auditable, traceable, token-efficient.</li>
+  </ul>
+</section>
+
+<section id="source">
+  <h2>4. Source: UI-first, OpenAPI as enrichment</h2>
+  <p class="key">OpenAPI tells you "what <b>data operations</b> exist"; the UI tells you "what a user can do, where, what to type" &mdash; that is what Guide teaches. <b>So the primary source is the frontend UI; OpenAPI/code is secondary</b>, used to enrich field enums and validation and to cross-validate liveness.</p>
+</section>
+
+<section id="inputs">
+  <h2>5. User inputs &amp; RBAC-first scan plan</h2>
+  <p>Studio asks for three inputs:</p>
+  <ol>
+    <li><b>Frontend source</b> &mdash; Git URL + branch/commit, or a source ZIP.</li>
+    <li><b>Backend contract</b> &mdash; OpenAPI URL, or an OpenAPI JSON/YAML file.</li>
+    <li><b>Test environment</b> &mdash; a test URL, the RBAC roles, and a test identity / auth profile per role.</li>
+  </ol>
+  <p><b>RBAC is configured before scanning:</b></p>
+  <pre class="json">enter roles manually (default)  OR  extract role candidates from source/auth config (optional)
+  -> user confirms
+  -> bind a test identity per role
+  -> freeze this Scan Plan</pre>
+  <p class="note">UI scanning only <b>verifies role visibility</b>; it can never create or modify RBAC, and never replaces the backend <code>DataScopeAdapter</code>.</p>
+</section>
+
+<section id="pipeline">
+  <h2>6. Studio structure &amp; build pipeline (control plane / build-time)</h2>
+
+  <h3>6.1 Studio architecture (guide flavor &mdash; focus on UI ingestion &amp; card generation)</h3>
+  <pre class="mermaid">
+flowchart TB
+  classDef core fill:#fdebd0,stroke:#ca6f1e,color:#7e5109;
+  classDef oss fill:#d5f5e3,stroke:#1e8449,color:#145a32;
+  classDef gen fill:#e8daef,stroke:#8e44ad,color:#5b2c6f;
+  classDef human fill:#fadbd8,stroke:#c0392b,color:#922b21;
+  classDef store fill:#d6eaf8,stroke:#2471a3,color:#1a5276;
+  classDef emph fill:#fcf3cf,stroke:#b7950b,color:#7d6608,stroke-width:3px;
+  classDef later fill:#f2f3f4,stroke:#909497,color:#566573,stroke-dasharray:5 3;
+
+  subgraph SUI["Studio frontend (authoring)"]
+    wiz["Config wizard, select Guide"]:::core
+    srcui["UI source connect"]:::core
+    clui["Clustering review"]:::core
+    cardui["Card review"]:::core
+    evalui["Eval panel"]:::core
+  end
+  subgraph SAPI["Control plane API"]
+    proj["Project and deployment mgmt"]:::core
+    mancrud["Manifest versioning"]:::core
+    orch["Pipeline orchestration"]:::core
+  end
+  subgraph SING["UI source ingestion, guide primary"]
+    sa["A static parse, ts-morph + react-docgen"]:::emph
+    sb["B Playwright safe scan"]:::emph
+    sc["C vision"]:::emph
+    sw["OpenAPI enrich, secondary"]:::later
+  end
+  subgraph SGEN["Generators, LLM"]
+    cl["Topic planner, domain keys"]:::gen
+    cg2["Card generator"]:::gen
+    pg["Prompt assembler"]:::gen
+    eg2["Eval golden-set generator"]:::gen
+  end
+  subgraph SREV["Human review, mandatory"]
+    rv["Clustering, cards, prompt, effects"]:::human
+  end
+  subgraph SEV["Eval engine"]
+    rn["Golden set + gate"]:::core
+  end
+  subgraph SSY["UI-diff sync"]
+    wt["UI inventory snapshot + diff"]:::core
+    im["Impact analysis, affected cards"]:::core
+  end
+  subgraph SREG["Registry / storage"]
+    cardstore["KB card index"]:::emph
+    manreg["Manifest registry"]:::store
+    uisnap["UI inventory snapshot"]:::store
+  end
+
+  SUI --> SAPI --> SING --> SGEN --> SREV --> SEV
+  SGEN --> SREG
+  SREV --> SREG
+  wt --> im --> SREV
+  </pre>
+  <p class="note">Guide-flavor differences vs the general Studio: ingestion is <b>UI-first (A/B/C)</b> with OpenAPI as enrichment; generators focus on <b>clustering + card generation</b> (not tool reshaping); sync is <b>UI-diff</b>. The general all-types Studio architecture lives in <code>STUDIO_ARCHITECTURE.html</code>.</p>
+
+  <h3>6.2 Fixed build pipeline (the workflow inside Studio)</h3>
+  <pre class="mermaid">
+flowchart TB
+  classDef core fill:#fdebd0,stroke:#ca6f1e,color:#7e5109;
+  classDef oss fill:#d5f5e3,stroke:#1e8449,color:#145a32;
+  classDef gen fill:#e8daef,stroke:#8e44ad,color:#5b2c6f;
+  classDef human fill:#fadbd8,stroke:#c0392b,color:#922b21;
+  classDef store fill:#d6eaf8,stroke:#2471a3,color:#1a5276;
+
+  plan["Create Scan Plan (RBAC-first)"]:::core
+  subgraph EXT["Extraction &mdash; 3 branches"]
+    se["Source Extraction<br/>ts-morph + react-docgen"]:::oss
+    oe["OpenAPI Extraction<br/>swagger-parser"]:::oss
+    rt["Runtime Scan<br/>Playwright, per role, safe shallow"]:::oss
+  end
+  plan --> EXT
+  se --> norm["Normalize to UI Inventory"]:::core
+  oe --> norm
+  rt --> norm
+  norm --> ev["Evidence Resolution<br/>evidence matrix, not opaque score"]:::core
+  ev --> inv["UI Inventory"]:::store
+  inv --> tp["Topic Planning<br/>domain keys"]:::gen
+  tp --> cg["Card Generation<br/>schema-constrained LLM"]:::gen
+  cg --> hr["Human Review<br/>tiered"]:::human
+  hr --> eg["Eval Gate"]:::core
+  eg --> rel["Immutable KB Release"]:::store
+  </pre>
+</section>
+
+<section id="srcbranch">
+  <h2>7. Source extraction branch</h2>
+  <p><code>ProjectDetector</code> &rarr; <code>ProjectProfile</code> (React version, TS config, bundler, router, i18n, form lib, API client paths, e2e paths). Then:</p>
+  <table>
+    <tr><th>Extractor</th><th>Output facts</th><th>Tooling</th></tr>
+    <tr><td>RouteExtractor</td><td>registered routes, patterns, lazy imports, page component, route guard, required roles, feature flags, menu/breadcrumb, deeplink</td><td>ts-morph</td></tr>
+    <tr><td>ComponentExtractor</td><td>component name, props, button/link/tab, headings, labels, tooltips, help text, dialog/drawer, table columns, <code>data-testid</code>, ARIA, disabled/hidden conditions</td><td>ts-morph + react-docgen (props/docs only)</td></tr>
+    <tr><td>FormExtractor</td><td>field name, label, required, input type, min/max, regex, enum, defaults, help, validation msg, submit target</td><td>RHF / Zod adapters</td></tr>
+    <tr><td>I18nExtractor</td><td>translation key (kept, not just the string), languages, labels, tooltips, messages</td><td>i18next-parser / FormatJS</td></tr>
+    <tr><td>ApiClientExtractor</td><td>fetch/axios/generated client, React Query hooks, component&rarr;API references</td><td>ts-morph</td></tr>
+    <tr><td>KnipScanner</td><td><b>dead-code signals only</b>: unused export, orphan file, unresolved dynamic import, deprecated annotation</td><td>knip</td></tr>
+  </table>
+  <p class="note">Live defaults, user data and API-returned business values must <b>never</b> enter the KB. Knip produces <b>signals</b>, it never deletes or excludes on its own.</p>
+</section>
+
+<section id="apibranch">
+  <h2>8. OpenAPI branch</h2>
+  <ul>
+    <li><b>Load &amp; canonicalize</b> (swagger-parser): validate, resolve <code>$ref</code>, normalize to 3.x, canonical JSON, compute spec digest.</li>
+    <li><b>Extract capabilities</b>: operationId, method/path, params, request/response schema, enums, constraints, description, security scheme, required scope, deprecated.</li>
+    <li><b>Align with frontend API client</b> by: operationId &rarr; method+normalized path &rarr; generated client method &rarr; source URL pattern. A miss yields a <code>conflict</code>, never an automatic "frontend is dead".</li>
+    <li><b>Effect candidates only</b>: infer a provisional <code>effect.class</code> (read_only / create / update / delete / external_send / unknown), <code>reviewed:false</code>. <b>Inferred effects must be human-confirmed before they become security policy.</b></li>
+  </ul>
+</section>
+
+<section id="runtime">
+  <h2>9. Runtime safe shallow scan (per role)</h2>
+  <p>Run once per confirmed role. <b>Auth precedence</b>: existing Playwright auth fixture &rarr; test service account &rarr; one-time interactive login &rarr; store a TTL-bound encrypted <code>auth_profile_ref</code>. Never store credentials in the manifest. <b>Seeds</b> come from registered routes + menus + sitemap + e2e paths + manual entries.</p>
+  <table>
+    <tr><th>Allowed (no side effects)</th><th>Forbidden (side effects)</th></tr>
+    <tr><td>open route, click nav link, switch tab, open/close dialog, expand accordion, hover/focus tooltip, change side-effect-free filters, paginate</td><td>submit form, Save, Delete, Approve, Send, Upload, pay, change config</td></tr>
+  </table>
+  <h3>Captured per UI state</h3>
+  <p><b>Capture</b>: URL, route pattern, title, ARIA tree, visible interactive elements, stable locators, tab/dialog/drawer state, screenshot, redirects, network request method/path, HTTP status, console errors.<br/>
+  <b>Never capture</b>: response bodies, Authorization header, cookies/tokens, user-entered values, live business table values.</p>
+</section>
+
+<section id="inventory">
+  <h2>10. Unified intermediate model (UI Inventory)</h2>
+  <p>The three branches do <b>not</b> emit KB directly &mdash; all normalize into one <code>UIInventory</code>:</p>
+  <pre class="json">Domain
+  Capability
+    Page
+      UI State
+        Element | Form Field | Transition | Role Visibility | API Binding</pre>
+  <p><code>InventoryNormalizer.merge(SourceFacts, ApiFacts, RuntimeFacts)</code> also: turns <code>/issues/123</code> into <code>/issues/{issueId}</code>, strips timestamps and dynamic counts, unifies i18n keys, merges multi-role results for one component, computes a stable content hash, keeps all provenance.</p>
+</section>
+
+<section id="evidence">
+  <h2>11. Evidence resolution (matrix, not an opaque score)</h2>
+  <p><code>EvidenceResolver.resolve(...)</code> assigns a status per item instead of a single <code>confidence=0.73</code>:</p>
+  <table>
+    <tr><th>Status</th><th>Condition</th></tr>
+    <tr><td><code>verified</code></td><td>exists in source AND reached at runtime by at least one role</td></tr>
+    <tr><td><code>supported</code></td><td>route registered, corroborated by API/e2e</td></tr>
+    <tr><td><code>source_only</code></td><td>found only in source</td></tr>
+    <tr><td><code>runtime_only</code></td><td>exists at runtime but source mapping failed</td></tr>
+    <tr><td><code>conflict</code></td><td>the three sources disagree</td></tr>
+    <tr><td><code>deprecated_candidate</code></td><td>multiple deprecation signals stack up</td></tr>
+    <tr><td><code>excluded</code></td><td>explicitly excluded by a human</td></tr>
+  </table>
+  <p class="key"><b>Rules</b>: runtime presence is strong positive evidence; runtime absence is only weak negative evidence. Knip alone cannot exclude. A missing OpenAPI endpoint alone cannot mark dead. No analytics hit alone cannot mark dead. Any RBAC conflict goes to a human.</p>
+</section>
+
+<section id="cards">
+  <h2>12. Topic planning &amp; five card kinds</h2>
+  <p>Do not key knowledge on page/tab names. <code>TopicPlanner.plan(UIInventory)</code> keys on <code>domain / entity / capability / topic</code> &mdash; e.g. <code>issue_management / issue / filtering / sla_risk_filter</code>; UI pages are only <code>source_ref</code>s.</p>
+  <table>
+    <tr><th>Card kind</th><th>Answers</th></tr>
+    <tr><td>Feature</td><td>what it does, who sees it, where the entry is</td></tr>
+    <tr><td>Navigation</td><td>how to get there, the path, required role</td></tr>
+    <tr><td>Field</td><td>meaning, required?, constraints</td></tr>
+    <tr><td>Enum</td><td>allowed values and what each means</td></tr>
+    <tr><td>How-to</td><td>how to complete an action</td></tr>
+  </table>
+  <p class="note">How-to steps may use <b>only evidenced</b> transitions: source transitions, e2e steps, Playwright safe-scan steps, or existing help/onboarding copy. <b>No evidence &rarr; no steps generated.</b> The LLM reads normalized facts only, never the raw untrusted repo.</p>
+</section>
+
+<section>
+  <h2>Card schema</h2>
+  <pre class="json">{
+  "area": "issue_management",
+  "topic": "sla_risk_filter",
+  "kind": "howto",
+  "title": "Filter issues at SLA risk",
+  "body_md": "Open Issues, expand Filters, enable 'SLA risk only', then apply.",
+  "visible_to": ["viewer", "bau_member"],
+  "related_tools": ["list_issues"],
+  "source_refs": [
+    {"type":"code","file":"src/issues/IssueFilters.tsx","symbol":"IssueFilters"},
+    {"type":"runtime","scan_run":"run-123","role":"viewer","state":"filters_open"},
+    {"type":"openapi","operation_id":"listIssues"}
+  ],
+  "evidence_status": "verified",
+  "content_hash": "sha256:..."
+}</pre>
+  <p class="note">Cards must not contain issue IDs, usernames, ticket contents or any live business value.</p>
+</section>
+
+<section id="review">
+  <h2>13. Tiered human review</h2>
+  <p>Every card needs human approval, but the depth differs.</p>
+  <table>
+    <tr><th>Batch approval (only if all hold)</th><th>Per-card review (any triggers)</th></tr>
+    <tr><td><code>verified</code>; no sensitive permission; no evidence conflict; every statement has source_refs; no write action</td><td><code>conflict</code> / <code>source_only</code> / <code>runtime_only</code> / <code>deprecated_candidate</code>; role-visibility mismatch; uncertain effect; how-to with submit/modify steps; references a low-trust source</td></tr>
+  </table>
+</section>
+
+<section id="eval">
+  <h2>14. Eval gate</h2>
+  <h3>Deterministic checks (CardValidator)</h3>
+  <p>schema valid; source_refs exist and resolve; no live data; no password/token; visibility not beyond evidence; related_tools exist; how-to steps map to transitions; no deprecated API referenced.</p>
+  <h3>LLM checks (fuzzy only)</h3>
+  <p>accurate feature summary; clear; introduces no step absent from evidence; does not state "maybe" as "certain".</p>
+  <h3>Guide-bot regression (golden, human-confirmed)</h3>
+  <p>e.g. "How do I filter SLA-risk issues?", "Can a viewer access the runbook?", "Where is the nonexistent bulk-delete feature?". <b>Deployment gates</b>: no fabrication, scope respected, correct knowledge routing, nonexistent feature rejected, no live values in KB. <b>Failing the gate blocks release.</b></p>
+</section>
+
+<section id="release">
+  <h2>15. Freeze, release &amp; incremental update</h2>
+  <p><b>Freeze on release</b>: repo commit, OpenAPI digest, RBAC scan plan, runtime scan digest, UI inventory digest, card versions, source_refs, eval result, reviewer. Production runtime reads only the immutable <code>KBRelease</code>, never unreviewed Studio drafts.</p>
+  <p><b>Incremental update</b> on change: repo commit changed &rarr; rerun SourceExtractor; OpenAPI digest changed &rarr; rerun ApiExtractor + oasdiff; UI/runtime snapshot changed &rarr; rerun affected roles/routes. <code>ImpactAnalyzer.diff(prev, new)</code> &rarr; affected fact IDs &rarr; affected card IDs &rarr; regenerate only those &rarr; review &rarr; eval &rarr; new immutable release. Production KB is never edited in place; always a new version, always rollback-able.</p>
+</section>
+
+<section id="rt">
+  <h2>16. Runtime (data plane) &mdash; how a question is answered</h2>
+  <h3>Two planes</h3>
+  <pre class="mermaid">
+flowchart LR
+  classDef core fill:#fdebd0,stroke:#ca6f1e,color:#7e5109;
+  classDef store fill:#d6eaf8,stroke:#2471a3,color:#1a5276;
+  classDef oss fill:#d5f5e3,stroke:#1e8449,color:#145a32;
+  classDef emph fill:#fcf3cf,stroke:#b7950b,color:#7d6608,stroke-width:3px;
+
+  dev["Integrator"]:::core --> ST
+  subgraph ST["Studio control plane (build-time)"]
+    stp["sections 5 to 15"]:::core
+  end
+  subgraph SH["Shared storage"]
+    cs["KB card index"]:::emph
+    mr["Manifest registry"]:::store
+  end
+  subgraph RTP["Runtime data plane (run-time)"]
+    run["agent_core, read-only"]:::oss
+  end
+  ST -->|publish and register| SH
+  RTP -->|read cards and config| SH
+  euser["End user"]:::oss --> RTP
+  </pre>
+
+  <h3>Runtime architecture</h3>
+  <pre class="mermaid">
+flowchart TB
+  classDef oss fill:#d5f5e3,stroke:#1e8449,color:#145a32;
+  classDef bau fill:#d6eaf8,stroke:#2471a3,color:#1a5276;
+  classDef core fill:#fdebd0,stroke:#ca6f1e,color:#7e5109;
+  classDef emph fill:#fcf3cf,stroke:#b7950b,color:#7d6608,stroke-width:3px;
+  classDef later fill:#f2f3f4,stroke:#909497,color:#566573,stroke-dasharray:5 3;
+
+  subgraph FE["Frontend"]
+    chatui["Chat UI + streaming renderer"]:::later
+  end
+  subgraph CT["Contract layer"]
+    contract["SSE contract, no write events"]:::core
+    resolver["deployment_id to manifest_digest"]:::core
+  end
+  subgraph EN["Runtime engine (agent_core)"]
+    lggraph["LangGraph ReAct loop"]:::oss
+    providers["Plugin interfaces"]:::core
+    gov["Tool governance"]:::bau
+    guard["Read-only admission"]:::core
+  end
+  subgraph PL["Plugin"]
+    knowprov["Knowledge provider"]:::bau
+    authad["Permission adapter"]:::core
+  end
+  subgraph KL["Knowledge layer (core)"]
+    cards["Partitioned cards"]:::emph
+    appknow["app_knowledge retrieval"]:::emph
+    nav["Deep-link generation"]:::emph
+    kstore["Index store (Postgres FTS)"]:::oss
+  end
+
+  FE --> CT --> EN --> PL --> KL
+  </pre>
+
+  <h3>One turn</h3>
+  <pre class="mermaid">
+flowchart TD
+  classDef bau fill:#d6eaf8,stroke:#2471a3,color:#1a5276;
+  classDef core fill:#fdebd0,stroke:#ca6f1e,color:#7e5109;
+  classDef oss fill:#d5f5e3,stroke:#1e8449,color:#145a32;
+  classDef emph fill:#fcf3cf,stroke:#b7950b,color:#7d6608,stroke-width:3px;
+
+  A["User question + deployment_id"]:::bau --> B["Lock version, build graph<br/>trim visible knowledge by role"]:::core
+  B --> C{"Agent picks an action"}:::oss
+  C -->|how-to or meaning| K["Fetch knowledge card"]:::emph
+  C -->|where is a feature| N["Generate deep link"]:::emph
+  C -->|need data, optional| T["Read-only tool"]:::bau
+  T --> DS["Filter data by role"]:::core
+  DS --> C
+  K --> C
+  N --> C
+  C -->|enough| ANS["Answer from cards only<br/>say 'not recorded' if missing"]:::core
+  ANS --> DONE["Stream back"]:::bau
+  </pre>
+  <p class="note"><b>Red line</b>: answers come only from fetched cards; anything not in the cards is "not recorded" &mdash; never invent a plausible procedure. This is an eval gate.</p>
+</section>
+
+<section id="tools">
+  <h2>17. MVP tooling</h2>
+  <table>
+    <tr><th>Stage</th><th>Tool</th></tr>
+    <tr><td>TypeScript AST</td><td>ts-morph</td></tr>
+    <tr><td>React component metadata</td><td>react-docgen</td></tr>
+    <tr><td>i18n</td><td>i18next-parser / FormatJS adapter</td></tr>
+    <tr><td>Dead-code signals</td><td>knip (advisory only)</td></tr>
+    <tr><td>OpenAPI</td><td>Swagger Parser</td></tr>
+    <tr><td>OpenAPI diff</td><td>oasdiff</td></tr>
+    <tr><td>Runtime scan</td><td>Playwright</td></tr>
+    <tr><td>Large URL queue</td><td>Crawlee (later, as needed)</td></tr>
+    <tr><td>LLM page-extraction fallback</td><td>Stagehand (manual trigger, not default)</td></tr>
+    <tr><td>Card generation</td><td>schema-constrained LLM</td></tr>
+    <tr><td>Storage / retrieval</td><td>PostgreSQL + FTS</td></tr>
+    <tr><td>Provenance / diff</td><td>self-built UI Inventory + source_refs</td></tr>
+  </table>
+  <p class="key"><b>In one line</b>: Guide = read-only engine + <b>KB as the core</b>; the KB is built from <b>UI-first sources (source code, OpenAPI, safe runtime scan)</b>, triangulated via an <b>evidence matrix</b>, clustered into domain topics, drafted by a schema-constrained LLM, human-reviewed in tiers, eval-gated, and shipped as an <b>immutable release</b> the runtime consumes read-only.</p>
+</section>
+
+<footer>Generated from design discussion &middot; build-time pipeline integrated from the UI-to-KB flow &middot; for offline rendering, replace the mermaid CDN script with a local file.</footer>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: true, theme: 'default', flowchart: { htmlLabels: true, useMaxWidth: true } });
+</script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+# bau_center is a separate git repo, kept here as reference only — not part of this repo
+/bau_center/
+
+# Local agent tooling / vendored skills (incl. cloned skill repos — some AGPL) — not part of this repo
+/.claude/
+/.agents/
+/.superpowers/
+/.benchmarks/
+/superpowers/
+/trailofbits-skills/
+/anthropics-skills/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Env / secrets
+.env
+*.local
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
