@@ -1,0 +1,37 @@
+# Demo deployment — drives the reference plugin (plugins/demo/providers.py).
+apiVersion: agentstudio/v1alpha1
+kind: ChatbotManifest
+metadata:
+  id: demo
+  version: 1
+  display_name: "Demo Assistant"
+  description: "A tiny ticketing assistant used to validate the runtime end-to-end."
+capabilities: [guide, data_read]
+model:
+  endpoint_ref: demo-gateway
+  default: demo-model
+tools:
+  provider: plugins.demo.providers.DemoTools
+  effects:
+    list_tickets: read_only
+    get_ticket: read_only
+    app_knowledge: read_only
+  governance:
+    per_tool_call_limit: 25
+    dedup_exact_repeats: true
+knowledge:
+  partitions:
+    - area: tickets
+      sources:
+        - {type: code, file: plugins/demo/data.py}
+  discovery: enum
+rbac:
+  principal_adapter: plugins.demo.providers.DemoAuth
+  data_scope_adapter: plugins.demo.providers.DemoDataScope
+  visibility:
+    tickets: [member, admin]
+prompt:
+  discipline_profile: strict-internal
+eval:
+  golden_set_ref: demo-golden
+  gates: [no_fabrication, scope_respected, correct_tool_routing]
