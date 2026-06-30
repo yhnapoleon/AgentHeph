@@ -5,6 +5,7 @@ description = "Platform for generating app-specific chatbots from a declarative 
 requires-python = ">=3.11"
 dependencies = [
     "pydantic>=2.6",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]

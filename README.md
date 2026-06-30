@@ -10,12 +10,12 @@ declarative **manifest**, on a reusable runtime core. Generalized from BAU Cente
 
 | Dir | Purpose | Status |
 |---|---|---|
-| `agent_core/` | Runtime core: schemas (contracts), provider interfaces, runtime, eval harness | M0 (schemas) → M1 (runtime) |
+| `agent_core/` | Runtime core: schemas (contracts), manifest loader+digest, provider interfaces, runtime, eval harness | M0 (schemas) → M1 (runtime) |
 | `studio/` | Control plane (build chatbots) | M2+ |
 | `plugins/` | Per-app providers (first: BAU) | M1 |
-| `contracts/` | Exported JSON Schemas (generated) | M0 |
+| `contracts/` | Exported JSON Schemas (generated) + `fixtures/` (BAU + a second app, to stress the schema) | M0 |
 | `evals/` | Golden sets per deployment | M1+ |
-| `tests/` | Schema + contract tests | M0 |
+| `tests/` | Schema, SSE, and fixture contract tests | M0 |
 
 ## Roadmap (see `design/ROADMAP.md`)
 

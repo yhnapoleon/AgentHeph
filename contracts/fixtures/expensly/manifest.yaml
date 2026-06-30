@@ -1,0 +1,71 @@
+# Expensly — a deliberately DIFFERENT second app (paper fixture; see ../README.md).
+# Picks the opposite corners from BAU so the schema can't quietly overfit:
+#   - tools IMPORTED from OpenAPI (tools.sources) instead of native
+#   - DELEGATED-USER credentials + multi-tenant (reserved phase-2 fields exercised)
+#   - per-row scope by ORG HIERARCHY (employee/manager/finance), not tab visibility
+#   - a genuine WRITE tool (approve_expense_report) with restricted visibility
+apiVersion: agentstudio/v1alpha1
+kind: ChatbotManifest
+metadata:
+  id: expensly
+  version: 3
+  display_name: "Expensly Assistant"
+  description: "Expense-report helpdesk + approvals for a generic SaaS (desensitized)."
+capabilities: [guide, data_read, propose_write]
+model:
+  endpoint_ref: corp-llm-gateway
+  default: gpt-oss-120b
+  light: gemma-3-27b-it
+  api_format: openai
+tools:
+  provider: expensly.OpenApiToolProvider
+  sources:                                 # reserved phase-2 shape: imported tools
+    - type: openapi
+      ref: ./openapi.yaml
+      auth_ref: expensly-oauth
+      trust_level: first_party
+  effects:                                 # every imported op must appear here (test-enforced)
+    list_expense_reports: read_only
+    get_expense_report: read_only
+    approve_expense_report: has_side_effect   # the write example
+  governance:
+    per_tool_call_limit: 25
+    dedup_exact_repeats: true
+    max_total_calls: 60                    # reserved budget fields exercised
+    wall_clock_ms: 30000
+knowledge:
+  partitions:
+    - area: expense_reports
+      sources:
+        - {type: openapi, path: /reports}
+        - {type: ui, component: ReportsTable}
+    - area: approvals
+      sources:
+        - {type: openapi, path: "/reports/{id}/approve"}
+  discovery: enum
+rbac:
+  principal_adapter: expensly.OidcAuthAdapter
+  data_scope_adapter: expensly.OrgHierarchyDataScope   # per-row by org hierarchy
+  visibility:
+    expense_reports: [employee, manager, finance_admin]
+    approvals: [manager, finance_admin]                # employees may NOT approve
+prompt:
+  discipline_profile: strict-internal
+  slots:
+    domain_card_ref: expensly-domain-card
+    tool_routing_ref: expensly-tool-routing
+eval:
+  golden_set_ref: expensly-golden
+  gates: [no_fabrication, scope_respected, correct_tool_routing, write_requires_confirm]
+# Reserved phase-2 fields — present here precisely to prove the schema carries them:
+tenant_id: acme
+credential_context:
+  mode: delegated_user
+  audience: https://api.expensly.example/v1
+  delegated: true
+  token_ref: expensly-user-oauth
+sync:
+  track_specs: [./openapi.yaml]
+audit:
+  sink: agent_run
+  retention_days: 730

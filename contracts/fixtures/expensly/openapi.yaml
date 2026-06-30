@@ -1,0 +1,42 @@
+# Desensitized OpenAPI for the Expensly fixture. Tiny on purpose: just enough surface
+# to prove an imported-tool app fits the schema and that each operation is governed by
+# a manifest `effects` entry (see ../../../tests/test_fixtures.py).
+openapi: 3.0.3
+info:
+  title: Expensly API (desensitized fixture)
+  version: "1.0"
+paths:
+  /reports:
+    get:
+      operationId: list_expense_reports
+      summary: List expense reports visible to the caller (per-row scoped by org hierarchy).
+      parameters:
+        - name: status
+          in: query
+          schema: {type: string, enum: [draft, submitted, approved, rejected]}
+      responses:
+        "200": {description: A page of expense reports}
+  /reports/{id}:
+    get:
+      operationId: get_expense_report
+      summary: Get one expense report (403 if outside the caller's scope).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "200": {description: The expense report}
+        "403": {description: Out of scope}
+  /reports/{id}/approve:
+    post:
+      operationId: approve_expense_report
+      summary: Approve a submitted report. Side-effecting; requires explicit confirmation.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "200": {description: Report approved}
+        "409": {description: Report not in 'submitted' state}

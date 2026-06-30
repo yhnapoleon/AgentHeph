@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Lint (ruff)
+        run: ruff check .
+      - name: Test
+        run: pytest -q
+      - name: Schema drift guard
+        # The committed JSON Schema must match the Pydantic source of truth.
+        run: |
+          python -m contracts.generate_schemas
+          git diff --exit-code contracts/*.schema.json

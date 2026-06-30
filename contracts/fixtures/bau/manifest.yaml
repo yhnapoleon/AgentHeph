@@ -1,0 +1,54 @@
+# BAU — first real app, expressed as a manifest (paper fixture; see ../README.md).
+# Native bau_* tools, service-account auth, single-tenant. No imported tool sources
+# and no credential_context: this is the "simple/first-party" end of the schema.
+apiVersion: agentstudio/v1alpha1
+kind: ChatbotManifest
+metadata:
+  id: bau-center
+  version: 1
+  display_name: "BAU 运维助手"
+  description: "Banking ML platform BAU on-call assistant."
+capabilities: [guide, data_read, propose_write]
+model:
+  endpoint_ref: bank-gateway       # *_ref into the secret store, never inline
+  default: gpt-oss-120b
+  light: gemma-3-27b-it
+  vision: OCBC-VLM-BeamSearch
+  api_format: openai
+tools:
+  provider: bau.ToolProvider       # native tools -> no `sources` block
+  effects:                         # human-frozen binary effect (full policy stored separately)
+    bau_list_issues: read_only
+    bau_issue_breakdown: read_only
+    bau_list_jobs: read_only
+    bau_create_issue_comment: has_side_effect
+  governance:
+    per_tool_call_limit: 25
+    dedup_exact_repeats: true
+knowledge:
+  partitions:
+    - area: issue_management
+      sources:
+        - {type: swagger, path: /issues}
+        - {type: ui, component: IssuesTab}
+    - area: runbook
+      sources:
+        - {type: doc, glob: "docs/runbook/*.md"}
+  discovery: enum
+rbac:
+  principal_adapter: bau.AuthAdapter
+  data_scope_adapter: bau.DataScopeAdapter   # per-row, not optional
+  visibility:
+    issue_management: [bau_member, viewer]
+    runbook: [bau_member]
+prompt:
+  discipline_profile: strict-internal
+  slots:
+    domain_card_ref: bau-domain-card
+    tool_routing_ref: bau-tool-routing
+eval:
+  golden_set_ref: bau-golden
+  gates: [no_fabrication, scope_respected, correct_tool_routing, write_requires_confirm]
+audit:
+  sink: agent_run
+  retention_days: 365
