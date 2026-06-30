@@ -37,3 +37,7 @@ target-version = "py311"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = [
+    # langgraph 1.0 moved create_react_agent; we still use the prebuilt for M1.
+    "ignore:create_react_agent has been moved",
+]
