@@ -12,6 +12,7 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "ruff>=0.4",
+    "alembic>=1.13",
 ]
 # Runtime extras land in M1 (LangGraph, langchain-openai, SQLAlchemy, etc.)
 runtime = [

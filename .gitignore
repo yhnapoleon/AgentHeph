@@ -24,6 +24,11 @@ env/
 .ruff_cache/
 .mypy_cache/
 
+# Local databases (dev / migration scratch)
+*.db
+*.sqlite
+*.sqlite3
+
 # Env / secrets
 .env
 *.local
