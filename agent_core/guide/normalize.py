@@ -52,6 +52,12 @@ def _merge_into(index: dict[tuple, InventoryItem], item: InventoryItem) -> None:
 class InventoryNormalizer:
     def merge(self, source: SourceFacts, api: ApiFacts, runtime: RuntimeFacts) -> UIInventory:
         index: dict[tuple, InventoryItem] = {}
+        # component -> route, so every item on a page shares the page's route key (the
+        # route is the stable UI-page identity; component name is kept in attrs).
+        comp_to_route = {r.page_component: template_path(r.route_pattern) for r in source.routes}
+
+        def page_of(component: str) -> str:
+            return comp_to_route.get(component, component)
 
         for r in source.routes:
             _merge_into(index, InventoryItem(
@@ -65,7 +71,7 @@ class InventoryNormalizer:
         for e in source.elements:
             name = e.i18n_key or _clean_label(e.text)
             _merge_into(index, InventoryItem(
-                kind="element", domain="", capability=e.page_component, page=e.page_component,
+                kind="element", domain="", capability=e.page_component, page=page_of(e.page_component),
                 name=name,
                 attrs={"element_kind": e.element_kind, "text": _clean_label(e.text),
                        "i18n_key": e.i18n_key, "testid": e.testid, "aria": e.aria, "state": e.state},
@@ -74,7 +80,7 @@ class InventoryNormalizer:
 
         for f in source.form_fields:
             _merge_into(index, InventoryItem(
-                kind="form_field", domain="", capability=f.page_component, page=f.page_component,
+                kind="form_field", domain="", capability=f.page_component, page=page_of(f.page_component),
                 name=f.field_name,
                 attrs={"label": _clean_label(f.label), "required": f.required, "input_type": f.input_type,
                        "constraints": f.constraints, "help": _clean_label(f.help)},
@@ -83,14 +89,14 @@ class InventoryNormalizer:
             ))
             for value in f.enum:
                 _merge_into(index, InventoryItem(
-                    kind="enum", domain="", capability=f.page_component, page=f.page_component,
+                    kind="enum", domain="", capability=f.page_component, page=page_of(f.page_component),
                     name=f"{f.field_name}={value}", attrs={"field": f.field_name, "value": value},
                     source_refs=[f.source_ref],
                 ))
 
         for t in source.transitions:
             _merge_into(index, InventoryItem(
-                kind="transition", domain="", capability=t.page_component, page=t.page_component,
+                kind="transition", domain="", capability=t.page_component, page=page_of(t.page_component),
                 name=t.action,
                 attrs={"from_state": t.from_state, "to_state": t.to_state, "origin": t.origin},
                 source_refs=[t.source_ref],
