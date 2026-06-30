@@ -10,12 +10,18 @@ declarative **manifest**, on a reusable runtime core. Generalized from BAU Cente
 
 | Dir | Purpose | Status |
 |---|---|---|
-| `agent_core/` | Runtime core: schemas (contracts), manifest loader+digest, provider interfaces, runtime, eval harness | M0 (schemas) → M1 (runtime) |
-| `studio/` | Control plane (build chatbots) | M2+ |
-| `plugins/` | Per-app providers (first: BAU) | M1 |
-| `contracts/` | Exported JSON Schemas (generated) + `fixtures/` (BAU + a second app, to stress the schema) | M0 |
-| `evals/` | Golden sets per deployment | M1+ |
-| `tests/` | Schema, SSE, and fixture contract tests | M0 |
+| `agent_core/schemas/` | Contracts: manifest, SSE, identity, effect (Pydantic) | M0 |
+| `agent_core/manifest/` | Manifest loader + immutable digest | M0 |
+| `agent_core/providers/` | Plugin interfaces (Tool/Knowledge/Auth/DataScope) | M0 |
+| `agent_core/runtime/` | Governed ReAct graph, SSE stream (call_id), prompt, llm, checkpoint, audit | M1 |
+| `agent_core/api/` | FastAPI `/chat` SSE app + deployment registry | M1 |
+| `agent_core/write/` | Consistency-correct write-proposal store (claim + outbox + idempotency) | M1 |
+| `agent_core/eval/` | Assertion harness + runtime runner/gate | M0/M1 |
+| `plugins/` | Per-app providers: `demo` (reference) + `bau` (blueprint) | M1 |
+| `studio/frontend/` | Single SSE renderer (Vite + React + TS) | M1 scaffold |
+| `contracts/` | Exported JSON Schemas + `fixtures/` (BAU + second app) | M0 |
+| `migrations/` | Alembic (write-flow tables) | M1 |
+| `evals/`, `tests/` | Golden sets; schema/SSE/runtime/write/eval tests | M0/M1 |
 
 ## Roadmap (see `design/ROADMAP.md`)
 

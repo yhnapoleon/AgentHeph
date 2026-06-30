@@ -24,6 +24,10 @@ env/
 .ruff_cache/
 .mypy_cache/
 
+# Frontend
+node_modules/
+studio/frontend/dist/
+
 # Local databases (dev / migration scratch)
 *.db
 *.sqlite
