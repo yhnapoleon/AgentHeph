@@ -13,7 +13,9 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install
-        run: pip install -e ".[dev]"
+        # runtime extra too, so the langgraph/fastapi/sqlalchemy-gated tests actually
+        # run in CI instead of being silently skipped.
+        run: pip install -e ".[dev,runtime]"
       - name: Lint (ruff)
         run: ruff check .
       - name: Test
